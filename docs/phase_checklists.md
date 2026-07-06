@@ -41,7 +41,7 @@
 - [x] `scripts/local-full-infra-down.sh` stops Compose and optionally deletes kind.
 - [x] `Makefile` keeps direct `local-full-up`, `local-full-validate` and `local-full-down` targets for operators who intentionally install host CLIs.
 - [x] Docker Compose includes `web-test` and `web-e2e` profiles for containerized Playwright validation.
-- [x] Docker control container exposes `docker-full-up`, `docker-full-validate`, `docker-full-down` and `docker-shell` so local orchestration tools also run in Docker.
+- [x] Docker control container exposes `docker-doctor`, `docker-full-up`, `docker-full-validate`, `docker-full-down` and `docker-shell` so local orchestration tools also run in Docker.
 
 ## VPS Docker Production
 - [x] `docker-compose.vps.yml` defines a production-like Docker stack for a generic VPS.

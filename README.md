@@ -20,9 +20,12 @@ cp .env.example .env
 export OPENROUTER_API_KEY=sk-or-v1-...
 export ASF_LITELLM_API_KEY=change-me-real-litellm-master-key
 
+make docker-doctor
 make docker-full-up
 make docker-full-validate
 ```
+
+`make docker-doctor` diferencia problema de Docker de problema de configuração. Ele valida Docker daemon, Compose, socket, container de controle, `kind`, `kubectl`, `OPENROUTER_API_KEY`/`OPENAI_API_KEY` e `ASF_LITELLM_API_KEY`.
 
 `make docker-full-up` constrói um container de controle local e, dentro dele, cria ou reutiliza o cluster `kind` chamado `asf-local`, gera `data/kube/asf-local-internal.kubeconfig`, aplica namespace/RBAC/NetworkPolicy/PV/PVC do sandbox, carrega a imagem `asf-sandbox-runner:local` e sobe Docker Compose com Postgres, Redis, Temporal, Temporal UI, MinIO, Keycloak, LiteLLM, API, worker e web.
 

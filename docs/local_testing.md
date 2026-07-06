@@ -11,9 +11,12 @@ export ASF_LITELLM_API_KEY=change-me-real-litellm-master-key
 
 ```bash
 cp .env.example .env
+make docker-doctor
 make docker-full-up
 make docker-full-validate
 ```
+
+`make docker-doctor` separates Docker readiness failures from missing production configuration. It checks the host Docker daemon, Compose, socket, Docker control container, `kind`, `kubectl`, real LLM upstream key and `ASF_LITELLM_API_KEY`.
 
 `make docker-full-up` usa o container de controle `asf-local-control` para criar o cluster `kind` `asf-local`, gerar o kubeconfig interno em `data/kube/asf-local-internal.kubeconfig`, aplicar namespace/RBAC/NetworkPolicy/PV/PVC do sandbox, carregar `asf-sandbox-runner:local` e subir Docker Compose com Postgres, Redis, Temporal, Temporal UI, MinIO, Keycloak, LiteLLM, API, worker e web.
 

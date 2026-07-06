@@ -1,4 +1,7 @@
-.PHONY: docker-full-up docker-full-validate docker-full-down docker-shell local-full-up local-full-validate local-full-down vps-docker-up vps-docker-validate vps-docker-down
+.PHONY: docker-doctor docker-full-up docker-full-validate docker-full-down docker-shell local-full-up local-full-validate local-full-down vps-docker-up vps-docker-validate vps-docker-down
+
+docker-doctor:
+	./scripts/docker-doctor.sh
 
 docker-full-up:
 	./scripts/docker-control.sh ./scripts/local-full-infra-up.sh
