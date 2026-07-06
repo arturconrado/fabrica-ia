@@ -14,7 +14,7 @@
 - [x] Batch item and metric list endpoints remain tenant-scoped.
 
 ## Required Release Validation
-- [ ] `make local-full-up` starts the full Docker + kind stack before batch validation.
+- [ ] `make docker-full-up` starts the full Docker + kind stack before batch validation.
 - [ ] `make vps-docker-up` starts the VPS production Docker stack before external batch validation.
 - [ ] Parent batch workflow orchestration validated in Temporal target environment.
 - [ ] Child workflow completion updates item status and HRS.
@@ -23,7 +23,7 @@
 - [ ] Batch UI links open child run workspaces.
 - [ ] Batch tenant isolation negative test passes.
 - [ ] Concurrent batch scheduling tested with production Postgres/Temporal.
-- [ ] `make local-full-validate` confirms `POST /batches`, 3 child items and metrics against the real local stack.
+- [ ] `make docker-full-validate` confirms `POST /batches`, 3 child items and metrics against the real local stack.
 - [ ] `make vps-docker-validate` confirms `POST /batches`, 3 child items and metrics through the public API domain.
 
 Last update: VPS Docker production deployment path.

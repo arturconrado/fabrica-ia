@@ -46,18 +46,19 @@ load_env_file() {
 }
 
 wait_for_pvc_bound() {
-  local context="$1"
-  local namespace="$2"
-  local pvc="$3"
+  local kubeconfig="$1"
+  local context="$2"
+  local namespace="$3"
+  local pvc="$4"
   local deadline=$((SECONDS + 120))
   while [ "$SECONDS" -lt "$deadline" ]; do
-    phase="$(kubectl --context "$context" -n "$namespace" get pvc "$pvc" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    phase="$(kubectl --kubeconfig "$kubeconfig" --context "$context" -n "$namespace" get pvc "$pvc" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
     if [ "$phase" = "Bound" ]; then
       return 0
     fi
     sleep 2
   done
-  kubectl --context "$context" -n "$namespace" get pvc "$pvc" || true
+  kubectl --kubeconfig "$kubeconfig" --context "$context" -n "$namespace" get pvc "$pvc" || true
   die "PVC $namespace/$pvc did not become Bound"
 }
 
@@ -90,6 +91,7 @@ main() {
   local cluster_name="${KIND_CLUSTER_NAME:-asf-local}"
   local context="kind-$cluster_name"
   local kubeconfig_path="${ASF_DOCKER_KUBECONFIG:-$REPO_ROOT/data/kube/asf-local-internal.kubeconfig}"
+  local host_kubeconfig_path="${ASF_HOST_KUBECONFIG:-$REPO_ROOT/data/kube/asf-local-host.kubeconfig}"
   local kind_config_path="$REPO_ROOT/data/kube/asf-local-kind.yaml"
   local sandbox_image="${ASF_SANDBOX_IMAGE:-asf-sandbox-runner:local}"
 
@@ -113,13 +115,16 @@ main() {
   log "Writing internal kubeconfig for Docker containers: $kubeconfig_path"
   kind get kubeconfig --internal --name "$cluster_name" > "$kubeconfig_path"
   chmod 0600 "$kubeconfig_path"
+  log "Writing control kubeconfig: $host_kubeconfig_path"
+  kind get kubeconfig --name "$cluster_name" > "$host_kubeconfig_path"
+  chmod 0600 "$host_kubeconfig_path"
 
   log "Applying sandbox namespace, RBAC, NetworkPolicy and local PV/PVC"
-  kubectl --context "$context" apply -f "$REPO_ROOT/deploy/k8s/namespace.yaml"
-  kubectl --context "$context" apply -f "$REPO_ROOT/deploy/k8s/rbac.yaml"
-  kubectl --context "$context" apply -f "$REPO_ROOT/deploy/k8s/sandbox-network-policy.yaml"
-  kubectl --context "$context" apply -f "$REPO_ROOT/deploy/kind/sandbox-workspace-pv.yaml"
-  wait_for_pvc_bound "$context" "software-factory-sandbox" "$ASF_SANDBOX_WORKSPACE_PVC"
+  kubectl --kubeconfig "$host_kubeconfig_path" --context "$context" apply -f "$REPO_ROOT/deploy/k8s/namespace.yaml"
+  kubectl --kubeconfig "$host_kubeconfig_path" --context "$context" apply -f "$REPO_ROOT/deploy/k8s/rbac.yaml"
+  kubectl --kubeconfig "$host_kubeconfig_path" --context "$context" apply -f "$REPO_ROOT/deploy/k8s/sandbox-network-policy.yaml"
+  kubectl --kubeconfig "$host_kubeconfig_path" --context "$context" apply -f "$REPO_ROOT/deploy/kind/sandbox-workspace-pv.yaml"
+  wait_for_pvc_bound "$host_kubeconfig_path" "$context" "software-factory-sandbox" "$ASF_SANDBOX_WORKSPACE_PVC"
 
   log "Building and loading sandbox image into kind: $sandbox_image"
   docker build -t "$sandbox_image" "$REPO_ROOT/apps/sandbox-runner"
@@ -138,7 +143,7 @@ main() {
   wait_for_http "MinIO" "http://localhost:9000/minio/health/ready"
   wait_for_http "LiteLLM" "http://localhost:4000/health/liveliness"
 
-  log "Stack ready. Run: make local-full-validate"
+  log "Stack ready. Run: make docker-full-validate"
 }
 
 main "$@"

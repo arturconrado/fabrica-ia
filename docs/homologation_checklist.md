@@ -25,7 +25,7 @@ Release production-only fica bloqueado até todos os itens críticos passarem no
 - [x] Batch scheduling creates child runs and metrics.
 
 ## Required Manual Validation
-- [ ] `make local-full-up` creates/reuses kind cluster `asf-local`.
+- [ ] `make docker-full-up` creates/reuses kind cluster `asf-local` through the Docker control container.
 - [ ] kind applies sandbox namespace, RBAC, deny-all NetworkPolicy and `asf-sandbox-workspaces` PV/PVC.
 - [ ] Docker Compose config succeeds with `ASF_DOCKER_KUBECONFIG=data/kube/asf-local-internal.kubeconfig`.
 - [ ] Docker Compose starts API, web, Postgres, Redis, Temporal, worker, MinIO, Keycloak and LiteLLM.
@@ -50,7 +50,7 @@ Release production-only fica bloqueado até todos os itens críticos passarem no
 - [ ] Protected route without JWT fails.
 - [ ] MCP denied tool call is rejected and audited.
 - [ ] Sandbox rejects non-allowlisted command and missing workspace PVC.
-- [ ] `make local-full-validate` passes API-container pytest, enterprise run evidence, batch metrics, Docker frontend build and containerized Playwright.
+- [ ] `make docker-full-validate` passes API-container pytest, enterprise run evidence, batch metrics, Docker frontend build and containerized Playwright.
 - [ ] `docker compose -f docker-compose.vps.yml config` passes with `.env.vps`.
 - [ ] VPS firewall exposes only `22`, `80` and `443` publicly.
 - [ ] `make vps-docker-up` starts the VPS production Docker stack.

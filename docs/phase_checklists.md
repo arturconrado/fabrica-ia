@@ -39,8 +39,9 @@
 - [x] `scripts/local-full-infra-up.sh` creates kind, applies sandbox manifests, loads sandbox image and starts Compose.
 - [x] `scripts/local-full-infra-validate.sh` gets a real Keycloak token and runs production-stack validation inside containers.
 - [x] `scripts/local-full-infra-down.sh` stops Compose and optionally deletes kind.
-- [x] `Makefile` exposes `local-full-up`, `local-full-validate` and `local-full-down`.
+- [x] `Makefile` keeps direct `local-full-up`, `local-full-validate` and `local-full-down` targets for operators who intentionally install host CLIs.
 - [x] Docker Compose includes `web-test` and `web-e2e` profiles for containerized Playwright validation.
+- [x] Docker control container exposes `docker-full-up`, `docker-full-validate`, `docker-full-down` and `docker-shell` so local orchestration tools also run in Docker.
 
 ## VPS Docker Production
 - [x] `docker-compose.vps.yml` defines a production-like Docker stack for a generic VPS.
@@ -67,8 +68,8 @@
 - [x] Batch checklist updated.
 
 ## Release Validation Pending In Target Environment
-- [ ] `make local-full-up` with real `OPENROUTER_API_KEY` or `OPENAI_API_KEY`, `ASF_LITELLM_API_KEY`, Docker, kind and kubectl.
-- [ ] `make local-full-validate` completes against the real local stack.
+- [ ] `make docker-full-up` with real `OPENROUTER_API_KEY` or `OPENAI_API_KEY`, `ASF_LITELLM_API_KEY` and Docker.
+- [ ] `make docker-full-validate` completes against the real local stack.
 - [ ] `make vps-docker-up` completes on a real VPS with DNS and TLS.
 - [ ] `make vps-docker-validate` completes through public HTTPS domains.
 - [ ] Keycloak login/token flow verified end to end.
@@ -79,4 +80,4 @@
 - [ ] MCP HTTP/SSE gateway tool call succeeds and denied tool call is audited.
 - [ ] Playwright run against the real stack covers enterprise build, approval, feedback and batch.
 
-Last update: OpenRouter default upstream for LiteLLM.
+Last update: Docker-first local control container.

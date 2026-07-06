@@ -6,11 +6,11 @@ Este repositório segue um contrato **production-only**: desenvolvimento local, 
 
 ## Requisitos Obrigatórios
 
-- Docker e Docker Compose.
-- `kind` e `kubectl` para a validação local full-infra.
+- Docker. O caminho recomendado usa um container de controle que inclui Docker CLI, Compose, `kind`, `kubectl`, `curl`, Python e Make.
+- `make`, `kind` e `kubectl` no host são opcionais para quem quiser rodar os scripts diretos sem o container de controle.
 - Chave real de LLM exposta como `OPENROUTER_API_KEY` (preferencial) ou `OPENAI_API_KEY`.
 - Chave do LiteLLM gateway em `ASF_LITELLM_API_KEY`.
-- Node.js 20+ para desenvolvimento do frontend fora do container.
+- Node.js 20+ apenas se você quiser desenvolvimento frontend fora do container.
 
 ## Subida Local Full-Infra
 
@@ -20,13 +20,13 @@ cp .env.example .env
 export OPENROUTER_API_KEY=sk-or-v1-...
 export ASF_LITELLM_API_KEY=change-me-real-litellm-master-key
 
-make local-full-up
-make local-full-validate
+make docker-full-up
+make docker-full-validate
 ```
 
-`make local-full-up` cria ou reutiliza o cluster `kind` chamado `asf-local`, gera `data/kube/asf-local-internal.kubeconfig`, aplica namespace/RBAC/NetworkPolicy/PV/PVC do sandbox, carrega a imagem `asf-sandbox-runner:local` e sobe Docker Compose com Postgres, Redis, Temporal, Temporal UI, MinIO, Keycloak, LiteLLM, API, worker e web.
+`make docker-full-up` constrói um container de controle local e, dentro dele, cria ou reutiliza o cluster `kind` chamado `asf-local`, gera `data/kube/asf-local-internal.kubeconfig`, aplica namespace/RBAC/NetworkPolicy/PV/PVC do sandbox, carrega a imagem `asf-sandbox-runner:local` e sobe Docker Compose com Postgres, Redis, Temporal, Temporal UI, MinIO, Keycloak, LiteLLM, API, worker e web.
 
-No dev production-like, o host só executa os CLIs de orquestração (`docker`, `kind`, `kubectl`, `curl`). Runtime, backend tests, frontend build, Playwright, LLM gateway, OIDC, Temporal, MinIO e sandbox rodam em containers.
+No dev production-like Docker-first, o host só precisa falar com o Docker daemon. Runtime, backend tests, frontend build, Playwright, LLM gateway, OIDC, Temporal, MinIO, sandbox e ferramentas de orquestração rodam em containers.
 
 Serviços:
 
@@ -38,7 +38,7 @@ Serviços:
 - MinIO Console: http://localhost:9001
 - LiteLLM: http://localhost:4000
 
-Keycloak importa o realm `software-factory`. Usuário local inicial: `operator@local.dev` / `ChangeMe123!`. `make local-full-validate` obtém um token OIDC real por direct grant e exporta `ASF_TEST_API_BASE_URL`, `ASF_TEST_BEARER_TOKEN` e `ASF_TEST_TENANT_ID` para os testes production-stack.
+Keycloak importa o realm `software-factory`. Usuário local inicial: `operator@local.dev` / `ChangeMe123!`. `make docker-full-validate` obtém um token OIDC real por direct grant e exporta `ASF_TEST_API_BASE_URL`, `ASF_TEST_BEARER_TOKEN` e `ASF_TEST_TENANT_ID` para os testes production-stack.
 
 ## Operação Principal
 
@@ -91,9 +91,9 @@ A API valida essa configuração no startup. Se faltar OIDC, LLM real, Temporal,
 ## Validação De Release
 
 ```bash
-make local-full-up
+make docker-full-up
 curl http://localhost:8000/health
-make local-full-validate
+make docker-full-validate
 ```
 
 O validador roda health checks, `GET /auth/me`, backend pytest dentro do container da API, enterprise build real com SSE, generated files, duas execuções de teste/sandbox, HRS >= 90, delivery package, batch real, build Docker do frontend e Playwright em container contra a rede Compose. Depois, via UI:
@@ -116,8 +116,8 @@ O validador roda health checks, `GET /auth/me`, backend pytest dentro do contain
 Para derrubar a stack:
 
 ```bash
-make local-full-down
-ASF_DELETE_KIND=1 make local-full-down
+make docker-full-down
+ASF_DELETE_KIND=1 make docker-full-down
 ```
 
 ## Deploy Em VPS Com Docker
@@ -149,6 +149,6 @@ Manifests base ficam em `deploy/k8s` para API, web, worker, RBAC e sandbox Netwo
 
 ## Estado Atual
 
-Implementado neste release: defaults production-only, guard de startup, rotas operacionais sem fallback local, Temporal runner production-named, MCP provider production-named, batch scheduling via Temporal, sandbox Kubernetes obrigatório, automação Docker + kind full-infra, Keycloak realm local, UI sem token dev e docs atualizadas.
+Implementado neste release: defaults production-only, guard de startup, rotas operacionais sem fallback local, Temporal runner production-named, MCP provider production-named, batch scheduling via Temporal, sandbox Kubernetes obrigatório, automação Docker + kind full-infra com container de controle, Keycloak realm local, UI sem token dev e docs atualizadas.
 
-Limitação restante: a validação real completa depende de chave OpenRouter ou OpenAI, Docker, `kind`, `kubectl`, DNS/TLS válido na VPS e recursos suficientes. Sem esses recursos, os scripts falham cedo em vez de simular sucesso.
+Limitação restante: a validação real completa depende de chave OpenRouter ou OpenAI, Docker, DNS/TLS válido na VPS e recursos suficientes. Sem esses recursos, os scripts falham cedo em vez de simular sucesso.

@@ -168,6 +168,15 @@ main() {
   log "Validating Docker Compose configuration"
   (cd "$REPO_ROOT" && docker compose config >/dev/null)
 
+  local cluster_name="${KIND_CLUSTER_NAME:-asf-local}"
+  local context="kind-$cluster_name"
+  local host_kubeconfig_path="${ASF_HOST_KUBECONFIG:-$REPO_ROOT/data/kube/asf-local-host.kubeconfig}"
+  if kind get clusters | grep -qx "$cluster_name"; then
+    mkdir -p "$(dirname "$host_kubeconfig_path")"
+    kind get kubeconfig --name "$cluster_name" > "$host_kubeconfig_path"
+    chmod 0600 "$host_kubeconfig_path"
+  fi
+
   export ASF_TEST_API_BASE_URL="${ASF_TEST_API_BASE_URL:-http://localhost:8000}"
   export ASF_TEST_TENANT_ID="${ASF_TEST_TENANT_ID:-local-dev}"
   local keycloak_user="${ASF_LOCAL_KEYCLOAK_USER:-operator@local.dev}"
@@ -200,9 +209,9 @@ main() {
   log "Checking authenticated principal"
   api_get "/auth/me" >/dev/null
 
-  if command -v kind >/dev/null 2>&1; then
-    kubectl --context "kind-${KIND_CLUSTER_NAME:-asf-local}" -n software-factory-sandbox get networkpolicy sandbox-deny-all >/dev/null
-    kubectl --context "kind-${KIND_CLUSTER_NAME:-asf-local}" -n software-factory-sandbox get pvc "${ASF_SANDBOX_WORKSPACE_PVC:-asf-sandbox-workspaces}" >/dev/null
+  if [ -f "$host_kubeconfig_path" ]; then
+    kubectl --kubeconfig "$host_kubeconfig_path" --context "$context" -n software-factory-sandbox get networkpolicy sandbox-deny-all >/dev/null
+    kubectl --kubeconfig "$host_kubeconfig_path" --context "$context" -n software-factory-sandbox get pvc "${ASF_SANDBOX_WORKSPACE_PVC:-asf-sandbox-workspaces}" >/dev/null
   fi
 
   log "Running backend production-stack tests inside the API container"

@@ -11,13 +11,13 @@ export ASF_LITELLM_API_KEY=change-me-real-litellm-master-key
 
 ```bash
 cp .env.example .env
-make local-full-up
-make local-full-validate
+make docker-full-up
+make docker-full-validate
 ```
 
-`make local-full-up` cria o cluster `kind` `asf-local`, gera o kubeconfig interno em `data/kube/asf-local-internal.kubeconfig`, aplica namespace/RBAC/NetworkPolicy/PV/PVC do sandbox, carrega `asf-sandbox-runner:local` e sobe Docker Compose com Postgres, Redis, Temporal, Temporal UI, MinIO, Keycloak, LiteLLM, API, worker e web.
+`make docker-full-up` usa o container de controle `asf-local-control` para criar o cluster `kind` `asf-local`, gerar o kubeconfig interno em `data/kube/asf-local-internal.kubeconfig`, aplicar namespace/RBAC/NetworkPolicy/PV/PVC do sandbox, carregar `asf-sandbox-runner:local` e subir Docker Compose com Postgres, Redis, Temporal, Temporal UI, MinIO, Keycloak, LiteLLM, API, worker e web.
 
-The host only runs orchestration CLIs (`docker`, `kind`, `kubectl`, `curl`). Runtime services, backend tests, frontend build, Playwright and sandbox execution run in Docker containers.
+The host only needs Docker access. The control container runs orchestration CLIs (`docker`, `kind`, `kubectl`, `curl`, Python and Make). Runtime services, backend tests, frontend build, Playwright and sandbox execution run in Docker containers.
 
 OpenRouter is the default upstream for LiteLLM. OpenAI direct keys remain supported as a fallback by setting `OPENAI_API_KEY`, but release validation should prefer `OPENROUTER_API_KEY` with `ASF_DEFAULT_MODEL=openrouter/openai/gpt-4o-mini`.
 
@@ -50,7 +50,7 @@ Open:
 ## Automated Full Validation
 
 ```bash
-make local-full-validate
+make docker-full-validate
 ```
 
 The script:
@@ -82,6 +82,6 @@ curl -H "Authorization: Bearer $TOKEN" -H 'X-Tenant-ID: local-dev' http://localh
 ## Teardown
 
 ```bash
-make local-full-down
-ASF_DELETE_KIND=1 make local-full-down
+make docker-full-down
+ASF_DELETE_KIND=1 make docker-full-down
 ```

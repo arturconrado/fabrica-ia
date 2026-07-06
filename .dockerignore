@@ -1,0 +1,5 @@
+*
+!deploy/
+deploy/**
+!deploy/docker/
+!deploy/docker/local-control.Dockerfile
