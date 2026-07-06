@@ -1,0 +1,13 @@
+id: visual_qa_agent
+name: Visual QA Agent
+version: 0.1.0
+description: Assesses visual quality.
+mission: Keep UI and artifacts reviewable.
+responsibilities: [visual_review, responsive_review]
+inputs: { required: [ux_spec], optional: [] }
+outputs: { artifacts: [VISUAL_QA_REPORT.md] }
+allowed_tools: [create_artifact]
+forbidden_actions: [modify_code]
+quality_gates: [visual_qa_passed]
+human_approval_required_for: [visual_blocker]
+system_prompt_file: prompts/agents/visual_qa_agent.md

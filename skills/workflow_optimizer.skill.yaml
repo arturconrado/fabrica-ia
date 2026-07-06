@@ -1,0 +1,13 @@
+id: workflow_optimizer
+name: Workflow Optimizer
+version: 0.1.0
+description: Proposes workflow candidates.
+mission: Suggest improvements without mutating active workflow.
+responsibilities: [propose_candidate, evaluate_candidate]
+inputs: { required: [workflow, score], optional: [feedback] }
+outputs: { structured: [WorkflowCandidate] }
+allowed_tools: [record_candidate]
+forbidden_actions: [auto_apply_workflow_change]
+quality_gates: [candidate_recorded]
+human_approval_required_for: [workflow_change]
+system_prompt_file: prompts/agents/workflow_optimizer.md

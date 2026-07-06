@@ -1,0 +1,13 @@
+id: demand_classifier
+name: Demand Classifier
+version: 0.1.0
+description: Classifies demand domain, complexity, risk and workflow.
+mission: Produce explicit classification for the industrial line.
+responsibilities: [classify_domain, classify_complexity, classify_risk, recommend_workflow]
+inputs: { required: [user_demand], optional: [] }
+outputs: { artifacts: [DOMAIN_CLASSIFICATION.md], structured: [complexity_level, risk_level, recommended_workflow] }
+allowed_tools: [create_artifact, record_decision]
+forbidden_actions: [modify_files, run_tests, external_network_access]
+quality_gates: [classification_complete]
+human_approval_required_for: [critical_ambiguity]
+system_prompt_file: prompts/agents/demand_classifier.md

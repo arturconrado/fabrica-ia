@@ -1,0 +1,13 @@
+id: accessibility_qa_agent
+name: Accessibility QA Agent
+version: 0.1.0
+description: Assesses accessibility.
+mission: Catch basic accessibility blockers.
+responsibilities: [semantic_review, contrast_review, keyboard_review]
+inputs: { required: [ux_spec], optional: [] }
+outputs: { artifacts: [ACCESSIBILITY_REPORT.md] }
+allowed_tools: [create_artifact]
+forbidden_actions: [modify_code]
+quality_gates: [accessibility_passed]
+human_approval_required_for: [accessibility_exception]
+system_prompt_file: prompts/agents/accessibility_qa_agent.md

@@ -1,0 +1,13 @@
+id: human_supervisor
+name: Human Supervisor
+version: 0.1.0
+description: Captures final human approval.
+mission: Record explicit human decision.
+responsibilities: [approve, reject, request_changes]
+inputs: { required: [homologation_report, package], optional: [human_comment] }
+outputs: { events: [approval.approved, approval.rejected, approval.changes_requested] }
+allowed_tools: [record_approval]
+forbidden_actions: [silent_approval]
+quality_gates: [human_approval_recorded]
+human_approval_required_for: [final_delivery]
+system_prompt_file: prompts/agents/human_supervisor.md

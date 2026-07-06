@@ -1,0 +1,13 @@
+id: project_manager
+name: Project Manager
+version: 0.1.0
+description: Produces task list.
+mission: Convert product and architecture into tasks.
+responsibilities: [task_breakdown, dependency_order]
+inputs: { required: [prd, api_spec, data_model], optional: [] }
+outputs: { artifacts: [TASK_LIST.md] }
+allowed_tools: [create_artifact]
+forbidden_actions: [modify_code]
+quality_gates: [task_list_complete]
+human_approval_required_for: [schedule_risk]
+system_prompt_file: prompts/agents/project_manager.md

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentSkill",
+  "type": "object",
+  "required": ["id", "name", "version", "responsibilities", "outputs"],
+  "properties": {
+    "id": { "type": "string" },
+    "name": { "type": "string" },
+    "version": { "type": "string" }
+  }
+}

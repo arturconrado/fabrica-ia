@@ -1,0 +1,19 @@
+graph:
+  id: batch_software_factory_v1
+  version: 0.1.0
+  description: Sequential local batch workflow for demo validation.
+  phases:
+    - batch_created
+    - demands_imported
+    - item_classification
+    - workflow_selection
+    - item_execution
+    - item_quality_gate
+    - item_human_waiting_if_needed
+    - batch_metrics
+    - batch_report
+    - batch_completed
+  demo_items:
+    - ContractFlow Demo
+    - InventoryFlow Demo
+    - HelpdeskFlow Demo

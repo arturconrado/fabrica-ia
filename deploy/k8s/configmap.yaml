@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: software-factory-config
+  namespace: software-factory
+data:
+  ASF_ENVIRONMENT: production
+  ASF_AUTH_DISABLED: "false"
+  ASF_AGENT_PROVIDER: litellm
+  ASF_WORKFLOW_BACKEND: temporal
+  ASF_TEMPORAL_ADDRESS: temporal-frontend.temporal.svc.cluster.local:7233
+  ASF_TEMPORAL_NAMESPACE: default
+  ASF_TEMPORAL_TASK_QUEUE: software-factory
+  ASF_SANDBOX_BACKEND: kubernetes
+  ASF_SANDBOX_NAMESPACE: software-factory-sandbox
+  ASF_SANDBOX_RUNTIME_CLASS: gvisor
+  ASF_SANDBOX_WORKSPACE_PVC: asf-sandbox-workspaces
+  ASF_SANDBOX_WORKSPACE_MOUNT_PATH: /workspace
+  ASF_SANDBOX_ALLOWED_COMMANDS: python -m pytest generated_app/tests

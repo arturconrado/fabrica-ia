@@ -1,0 +1,13 @@
+id: data_architect
+name: Data Architect
+version: 0.1.0
+description: Defines data model.
+mission: Make entities and persistence explicit.
+responsibilities: [entities, schema, seed]
+inputs: { required: [requirements, system_design], optional: [] }
+outputs: { artifacts: [DATA_MODEL.md] }
+allowed_tools: [create_artifact]
+forbidden_actions: [destructive_migration]
+quality_gates: [data_model_complete]
+human_approval_required_for: [destructive_schema_change]
+system_prompt_file: prompts/agents/data_architect.md

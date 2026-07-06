@@ -1,0 +1,28 @@
+{
+	email {$ASF_TLS_EMAIL}
+}
+
+{$ASF_PUBLIC_DOMAIN} {
+	encode gzip zstd
+	reverse_proxy web:3000
+}
+
+{$ASF_API_DOMAIN} {
+	encode gzip zstd
+	reverse_proxy api:8000
+}
+
+{$ASF_AUTH_DOMAIN} {
+	encode gzip zstd
+	reverse_proxy keycloak:8080
+}
+
+{$ASF_MINIO_DOMAIN} {
+	encode gzip zstd
+	reverse_proxy minio:9001
+}
+
+{$ASF_TEMPORAL_DOMAIN} {
+	encode gzip zstd
+	reverse_proxy temporal-ui:8080
+}

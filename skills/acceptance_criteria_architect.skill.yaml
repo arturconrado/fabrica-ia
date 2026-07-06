@@ -1,0 +1,13 @@
+id: acceptance_criteria_architect
+name: Acceptance Criteria Architect
+version: 0.1.0
+description: Generates requirements and acceptance criteria.
+mission: Produce autonomous acceptance criteria and UAT evidence.
+responsibilities: [generate_requirements, generate_gherkin, generate_uat]
+inputs: { required: [user_demand, domain_classification], optional: [] }
+outputs: { artifacts: [ACCEPTANCE_CRITERIA.md], structured: [requirements, acceptance_criteria, uat_scenarios] }
+allowed_tools: [create_artifact, create_requirement, create_acceptance_criterion]
+forbidden_actions: [modify_global_prompts]
+quality_gates: [p0_criteria_exist]
+human_approval_required_for: [blocked_ambiguity]
+system_prompt_file: prompts/agents/acceptance_criteria_architect.md

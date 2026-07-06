@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: software-factory-worker
+  namespace: software-factory
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: software-factory-worker
+  template:
+    metadata:
+      labels:
+        app: software-factory-worker
+    spec:
+      serviceAccountName: software-factory-api
+      containers:
+        - name: worker
+          image: software-factory-api:latest
+          command: ["python", "-m", "app.worker"]
+          envFrom:
+            - configMapRef:
+                name: software-factory-config
+            - secretRef:
+                name: software-factory-secrets

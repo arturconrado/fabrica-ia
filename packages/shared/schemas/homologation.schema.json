@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HomologationPackage",
+  "type": "object",
+  "required": ["run_id", "status", "hrs", "artifacts", "tests", "gates"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "status": { "type": "string" },
+    "hrs": { "type": "number" },
+    "artifacts": { "type": "array" },
+    "tests": { "type": "object" },
+    "gates": { "type": "array" }
+  }
+}

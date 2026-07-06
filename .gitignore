@@ -1,0 +1,24 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+!.env.vps.example
+
+# Python
+__pycache__/
+.pytest_cache/
+*.pyc
+apps/api/test-data/
+apps/api/data/
+test-data/
+
+# Node / Next
+apps/web/node_modules/
+apps/web/.next/
+apps/web/out/
+apps/web/test-results/
+npm-debug.log*
+
+# Runtime factory data
+data/*
+!data/.gitkeep

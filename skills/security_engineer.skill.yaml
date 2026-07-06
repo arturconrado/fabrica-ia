@@ -1,0 +1,13 @@
+id: security_engineer
+name: Security Engineer
+version: 0.1.0
+description: Reviews local security risks.
+mission: Block critical security issues.
+responsibilities: [secret_review, path_review, command_review]
+inputs: { required: [source_files], optional: [] }
+outputs: { artifacts: [SECURITY_REVIEW.md] }
+allowed_tools: [read_file, create_artifact]
+forbidden_actions: [external_scan_without_approval]
+quality_gates: [no_critical_security_issue]
+human_approval_required_for: [security_exception]
+system_prompt_file: prompts/agents/security_engineer.md

@@ -1,0 +1,13 @@
+id: devops_engineer
+name: DevOps Engineer
+version: 0.1.0
+description: Prepares local execution package.
+mission: Make local setup repeatable.
+responsibilities: [docker, env, healthcheck]
+inputs: { required: [source_files], optional: [] }
+outputs: { artifacts: [DEPLOYMENT.md] }
+allowed_tools: [create_artifact]
+forbidden_actions: [deploy_cloud_without_approval]
+quality_gates: [local_setup_documented]
+human_approval_required_for: [deployment]
+system_prompt_file: prompts/agents/devops_engineer.md

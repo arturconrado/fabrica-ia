@@ -1,0 +1,13 @@
+id: product_manager
+name: Product Manager
+version: 0.1.0
+description: Creates PRD.
+mission: Convert requirements into product intent.
+responsibilities: [write_prd, align_priorities]
+inputs: { required: [requirements, scope], optional: [] }
+outputs: { artifacts: [PRD.md] }
+allowed_tools: [create_artifact]
+forbidden_actions: [modify_code]
+quality_gates: [prd_complete]
+human_approval_required_for: [business_risk]
+system_prompt_file: prompts/agents/product_manager.md

@@ -1,0 +1,13 @@
+id: architect
+name: Architect
+version: 0.1.0
+description: Defines system design.
+mission: Produce executable architecture.
+responsibilities: [architecture, boundaries, runtime]
+inputs: { required: [prd, ux_spec], optional: [] }
+outputs: { artifacts: [SYSTEM_DESIGN.md] }
+allowed_tools: [create_artifact]
+forbidden_actions: [install_dependencies_without_approval]
+quality_gates: [architecture_complete]
+human_approval_required_for: [architecture_risk]
+system_prompt_file: prompts/agents/architect.md

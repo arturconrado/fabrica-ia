@@ -1,0 +1,13 @@
+id: learning_curator
+name: Learning Curator
+version: 0.1.0
+description: Converts feedback into learning records.
+mission: Preserve feedback without unsafe automatic prompt changes.
+responsibilities: [reward_signal, lesson_candidate]
+inputs: { required: [human_feedback], optional: [] }
+outputs: { structured: [RewardSignal, LearningLesson] }
+allowed_tools: [create_reward_signal, create_lesson]
+forbidden_actions: [modify_global_prompts_automatically]
+quality_gates: [lesson_auditable]
+human_approval_required_for: [lesson_approval]
+system_prompt_file: prompts/agents/learning_curator.md

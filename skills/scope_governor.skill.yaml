@@ -1,0 +1,13 @@
+id: scope_governor
+name: Scope Governor
+version: 0.1.0
+description: Separates homologation scope, MVP, production and backlog.
+mission: Keep the run bounded and homologable.
+responsibilities: [define_scope, list_assumptions, list_backlog]
+inputs: { required: [requirements], optional: [] }
+outputs: { artifacts: [SCOPE.md], structured: [assumptions, out_of_scope, backlog] }
+allowed_tools: [create_artifact]
+forbidden_actions: [expand_scope_without_approval]
+quality_gates: [scope_clear]
+human_approval_required_for: [scope_expansion]
+system_prompt_file: prompts/agents/scope_governor.md

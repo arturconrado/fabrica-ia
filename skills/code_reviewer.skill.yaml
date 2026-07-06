@@ -1,0 +1,13 @@
+id: code_reviewer
+name: Code Reviewer
+version: 0.1.0
+description: Reviews implementation quality.
+mission: Find bugs and completeness gaps before QA.
+responsibilities: [review_code, check_requirements, approve_or_request_changes]
+inputs: { required: [source_files, requirements], optional: [] }
+outputs: { artifacts: [REVIEW_REPORT.md] }
+allowed_tools: [read_file, create_artifact]
+forbidden_actions: [modify_code]
+quality_gates: [review_complete]
+human_approval_required_for: [critical_design_tradeoff]
+system_prompt_file: prompts/agents/code_reviewer.md

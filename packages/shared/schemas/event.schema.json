@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentEvent",
+  "type": "object",
+  "required": ["id", "run_id", "event_type", "created_at"],
+  "properties": {
+    "id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "event_type": { "type": "string" },
+    "payload_json": { "type": "object" }
+  }
+}

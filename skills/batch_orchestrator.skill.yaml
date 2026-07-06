@@ -1,0 +1,13 @@
+id: batch_orchestrator
+name: Batch Orchestrator
+version: 0.1.0
+description: Runs multiple demands.
+mission: Produce batch delivery metrics.
+responsibilities: [create_batch, run_items, calculate_metrics]
+inputs: { required: [demands], optional: [] }
+outputs: { artifacts: [BATCH_REPORT.md], structured: [BatchMetric] }
+allowed_tools: [start_run, create_artifact]
+forbidden_actions: [parallel_overload]
+quality_gates: [batch_metrics_created]
+human_approval_required_for: [batch_release]
+system_prompt_file: prompts/agents/batch_orchestrator.md

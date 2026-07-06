@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: software-factory-web
+  namespace: software-factory
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: software-factory-web
+  template:
+    metadata:
+      labels:
+        app: software-factory-web
+    spec:
+      containers:
+        - name: web
+          image: software-factory-web:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NEXT_PUBLIC_API_BASE_URL
+              value: https://api.example.com
+            - name: NEXT_PUBLIC_DEFAULT_TENANT_ID
+              value: production
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: software-factory-web
+  namespace: software-factory
+spec:
+  selector:
+    app: software-factory-web
+  ports:
+    - port: 3000
+      targetPort: 3000

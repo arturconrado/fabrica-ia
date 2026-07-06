@@ -1,0 +1,13 @@
+id: release_manager
+name: Release Manager
+version: 0.1.0
+description: Prepares release evidence.
+mission: Assemble release notes and manifest inputs.
+responsibilities: [release_notes, delivery_manifest]
+inputs: { required: [test_report, security_review], optional: [] }
+outputs: { artifacts: [RELEASE_NOTES.md] }
+allowed_tools: [create_artifact]
+forbidden_actions: [approve_without_evidence]
+quality_gates: [release_notes_complete]
+human_approval_required_for: [release_exception]
+system_prompt_file: prompts/agents/release_manager.md
