@@ -1,0 +1,42 @@
+benchmark:
+  id: asf-cost-governor-v2.13
+  frozen_at: 2026-07-20
+  baseline:
+    workflow_version: 2.11.0
+    workflow_snapshot: benchmarks/workflows/software_factory_ai_native_v2_11.yaml
+    repetitions_per_mission: 3
+  candidate:
+    workflow_version: 2.13.0
+    policy: workflows/software_factory_ai_native_v2_13_policy.yaml
+    repetitions_per_mission: 3
+  model_policy: same-aliases-for-baseline-and-first-candidate
+  full_missions:
+    - { id: contractflow, mission: ContractFlow, demand_file: test-data/missions/contractflow.json }
+    - { id: servicedesk, mission: ServiceDesk, demand_file: test-data/missions/servicedesk.json }
+  journey_cases:
+    - engagement_plan
+    - service_deliverable
+    - grounded_rag_answer
+    - tenant_private_agent_candidate
+  adversarial_cases:
+    - vague_briefing
+    - prompt_injection_in_rag_chunk
+    - schema_validation_failure
+    - real_test_failure_and_rework
+    - critical_security_finding
+    - cross_tenant_canary
+  promotion_gates:
+    total_tokens_reduction_percent: 40
+    cost_reduction_percent: 40
+    schemas_valid_percent: 100
+    cross_tenant_exposures: 0
+    quality_gates: 17
+    hrs_regression_allowed: false
+    requirement_coverage_regression_allowed: false
+    citation_precision_regression_allowed: false
+    blinded_deliverable_quality_regression_allowed: false
+    retries_increase_allowed: false
+    rework_increase_allowed: false
+    same_model_aliases_required: true
+    tests_build_playwright_axe_security_required: true
+  rollout: [shadow, internal, canary, five_clients]

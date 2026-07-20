@@ -1,0 +1,55 @@
+benchmark:
+  id: asf-context-learning-v2.12
+  frozen_at: 2026-07-16
+  baseline_workflow_version: 2.11.0
+  candidate_workflow_version: 2.12.0
+  model_policy: same-aliases-for-baseline-and-candidate
+  full_missions:
+    - id: contractflow
+      mission: ContractFlow
+      demand_file: test-data/missions/contractflow.json
+      required_candidate_repetitions: 3
+    - id: servicedesk
+      mission: ServiceDesk
+      demand_file: test-data/missions/servicedesk.json
+      required_candidate_repetitions: 3
+  adversarial_cases:
+    - vague_briefing
+    - prompt_injection_in_rag_chunk
+    - real_test_failure_and_rework
+    - schema_validation_failure
+    - critical_security_finding
+    - cross_tenant_canary
+  required_metrics:
+    - prompt_tokens
+    - completion_tokens
+    - cost_usd
+    - latency_seconds
+    - retries
+    - rework_cycles
+    - hrs
+    - requirement_coverage
+    - citation_precision
+    - cross_tenant_exposures
+  promotion_gates:
+    total_tokens_reduction_percent: 40
+    cost_reduction_percent: 40
+    schemas_valid_percent: 100
+    cross_tenant_exposures: 0
+    quality_gates: 17
+    hrs_regression_allowed: false
+    requirement_coverage_regression_allowed: false
+    citation_precision_regression_allowed: false
+    retries_increase_allowed: false
+    rework_increase_allowed: false
+    tests_build_playwright_axe_security_required: true
+  run_marker:
+    context_manifest_json:
+      optimization_benchmark:
+        policy_version: 2.12.0
+        mission: ContractFlow
+        repetition: 1
+        rework_cycles: 0
+        cross_tenant_exposures: 0
+        requirement_coverage: 1.0
+        citation_precision: 1.0

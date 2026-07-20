@@ -1,0 +1,218 @@
+graph:
+  id: software_factory_ai_native_v2
+  version: 2.12.0
+  description: AI-native software factory with layered tenant context, per-role contracts, model-produced outputs and deterministic gates.
+  execution:
+    ai_required: true
+    context_policy_version: 2.12.0
+    routing_policy_version: 2.12.0
+    prompt_policy_version: 2.12.0
+    default_budget_usd: 15.0
+    max_total_steps: 32
+    workspace_root: generated_app
+  ui:
+    title: Fábrica AI-Native V2
+    show_technical_nodes: false
+    group_by: phase
+  phases:
+    - { id: demand_classification, label: Classificação da Demanda }
+    - { id: autonomous_acceptance_criteria, label: Critérios de Aceite }
+    - { id: scope_governance, label: Governança de Escopo }
+    - { id: product_planning, label: Planejamento de Produto }
+    - { id: ux_design, label: UX/UI }
+    - { id: architecture, label: Arquitetura }
+    - { id: data_design, label: Dados }
+    - { id: api_contract, label: Contratos de API }
+    - { id: task_planning, label: Planejamento de Tarefas }
+    - { id: implementation, label: Implementação }
+    - { id: code_review, label: Revisão de Código }
+    - { id: testing, label: Testes }
+    - { id: visual_qa, label: QA Visual }
+    - { id: accessibility_qa, label: Acessibilidade }
+    - { id: security_review, label: Segurança }
+    - { id: devops_packaging, label: Empacotamento }
+    - { id: release_management, label: Release }
+    - { id: quality_governance, label: Governança de Qualidade }
+    - { id: human_homologation_approval, label: Aprovação Humana }
+    - { id: final_delivery, label: Entrega Final }
+  nodes:
+    - { id: USER, type: passthrough, phase: demand_classification, ai_required: false }
+    - id: Demand Classifier
+      type: agent
+      phase: demand_classification
+      skill: demand_classifier
+      model_role: fast
+      max_output_tokens: 2000
+      outputs: [DOMAIN_CLASSIFICATION.md]
+      context_policy: { version: 2.12.0, allowed_reference_types: [demand, contract, rag, lesson], input_budget_tokens: 10000, max_rag_chunks: 3, max_lessons: 2, lesson_budget_tokens: 800, file_mode: none }
+    - id: Acceptance Criteria Architect
+      type: agent
+      phase: autonomous_acceptance_criteria
+      skill: acceptance_criteria_architect
+      model_role: reasoning
+      max_output_tokens: 8000
+      outputs: [ACCEPTANCE_CRITERIA.md]
+      context_policy: { version: 2.12.0, allowed_reference_types: [demand, contract, scope, artifact, rag, lesson], required_artifacts: [DOMAIN_CLASSIFICATION.md], input_budget_tokens: 18000, max_rag_chunks: 4, max_lessons: 3, lesson_budget_tokens: 1200, file_mode: none }
+    - id: Scope Governor
+      type: agent
+      phase: scope_governance
+      skill: scope_governor
+      model_role: reasoning
+      max_output_tokens: 6000
+      outputs: [SCOPE.md]
+      context_policy: { version: 2.12.0, allowed_reference_types: [demand, contract, scope, artifact, rag, lesson], required_artifacts: [DOMAIN_CLASSIFICATION.md, ACCEPTANCE_CRITERIA.md], input_budget_tokens: 18000, max_rag_chunks: 4, max_lessons: 3, lesson_budget_tokens: 1200, file_mode: none }
+    - id: Product Manager
+      type: agent
+      phase: product_planning
+      skill: product_manager
+      model_role: reasoning
+      max_output_tokens: 8000
+      outputs: [PRD.md]
+      context_policy: { version: 2.12.0, allowed_reference_types: [demand, contract, scope, artifact, rag, decision, lesson], required_artifacts: [ACCEPTANCE_CRITERIA.md, SCOPE.md], optional_artifacts: [DOMAIN_CLASSIFICATION.md], input_budget_tokens: 22000, max_rag_chunks: 5, max_lessons: 3, lesson_budget_tokens: 1500, file_mode: none }
+    - id: UX UI Designer
+      type: agent
+      phase: ux_design
+      skill: ux_ui_designer
+      model_role: reasoning
+      max_output_tokens: 8000
+      outputs: [UX_SPEC.md]
+      context_policy: { version: 2.12.0, allowed_reference_types: [demand, artifact, rag, lesson], required_artifacts: [PRD.md, ACCEPTANCE_CRITERIA.md], optional_artifacts: [SCOPE.md], input_budget_tokens: 22000, max_rag_chunks: 4, max_lessons: 3, lesson_budget_tokens: 1500, file_mode: none }
+    - id: Architect
+      type: agent
+      phase: architecture
+      skill: architect
+      model_role: reasoning
+      max_output_tokens: 10000
+      outputs: [SYSTEM_DESIGN.md]
+      context_policy: { version: 2.12.0, allowed_reference_types: [demand, contract, scope, artifact, rag, decision, lesson], required_artifacts: [PRD.md, ACCEPTANCE_CRITERIA.md, UX_SPEC.md], optional_artifacts: [SCOPE.md], input_budget_tokens: 28000, max_rag_chunks: 5, max_lessons: 3, lesson_budget_tokens: 1800, file_mode: none }
+    - id: Data Architect
+      type: agent
+      phase: data_design
+      skill: data_architect
+      model_role: reasoning
+      max_output_tokens: 8000
+      outputs: [DATA_MODEL.md]
+      context_policy: { version: 2.12.0, allowed_reference_types: [demand, artifact, rag, lesson], required_artifacts: [PRD.md, SYSTEM_DESIGN.md], optional_artifacts: [ACCEPTANCE_CRITERIA.md], input_budget_tokens: 22000, max_rag_chunks: 4, max_lessons: 3, lesson_budget_tokens: 1500, file_mode: none }
+    - id: API Contract Engineer
+      type: agent
+      phase: api_contract
+      skill: api_contract_engineer
+      model_role: reasoning
+      max_output_tokens: 10000
+      outputs: [API_SPEC.md]
+      context_policy: { version: 2.12.0, allowed_reference_types: [demand, artifact, rag, lesson], required_artifacts: [ACCEPTANCE_CRITERIA.md, SYSTEM_DESIGN.md, DATA_MODEL.md], optional_artifacts: [PRD.md], input_budget_tokens: 26000, max_rag_chunks: 4, max_lessons: 3, lesson_budget_tokens: 1500, file_mode: none }
+    - id: Project Manager
+      type: agent
+      phase: task_planning
+      skill: project_manager
+      model_role: fast
+      max_output_tokens: 3000
+      outputs: [TASK_LIST.md]
+      context_policy: { version: 2.12.0, allowed_reference_types: [demand, scope, artifact, decision, lesson], required_artifacts: [PRD.md, SYSTEM_DESIGN.md, API_SPEC.md], optional_artifacts: [DATA_MODEL.md, UX_SPEC.md], input_budget_tokens: 18000, max_rag_chunks: 0, max_lessons: 2, lesson_budget_tokens: 800, file_mode: none }
+    - id: Engineer
+      type: agent
+      phase: implementation
+      skill: engineer
+      model_role: code
+      max_output_tokens: 32000
+      outputs: [IMPLEMENTATION_SUMMARY.md]
+      allowed_tools: [write_workspace]
+      context_policy: { version: 2.12.0, allowed_reference_types: [demand, scope, artifact, diff, test, rag, decision, lesson], required_artifacts: [PRD.md, ACCEPTANCE_CRITERIA.md, UX_SPEC.md, SYSTEM_DESIGN.md, DATA_MODEL.md, API_SPEC.md, TASK_LIST.md], optional_artifacts: [REVIEW_REPORT.md, TEST_REPORT.md], input_budget_tokens: 48000, max_rag_chunks: 6, max_lessons: 4, lesson_budget_tokens: 2200, file_mode: diff }
+    - id: Code Reviewer
+      type: agent
+      phase: code_review
+      skill: code_reviewer
+      model_role: code
+      max_output_tokens: 7000
+      outputs: [REVIEW_REPORT.md]
+      allowed_tools: [read_workspace]
+      context_policy: { version: 2.12.0, allowed_reference_types: [artifact, diff, decision, lesson], required_artifacts: [ACCEPTANCE_CRITERIA.md, SYSTEM_DESIGN.md, API_SPEC.md, IMPLEMENTATION_SUMMARY.md], input_budget_tokens: 36000, max_rag_chunks: 0, max_lessons: 4, lesson_budget_tokens: 1800, file_mode: diff }
+    - id: QA Engineer
+      type: agent
+      phase: testing
+      skill: qa_engineer
+      model_role: code
+      max_output_tokens: 7000
+      observation_max_output_tokens: 5000
+      outputs: [TEST_PLAN.md, TEST_REPORT.md]
+      allowed_tools: [read_workspace, backend_tests, frontend_tests, frontend_build]
+      context_policy: { version: 2.12.0, allowed_reference_types: [artifact, file, test, decision, lesson], required_artifacts: [ACCEPTANCE_CRITERIA.md, API_SPEC.md, REVIEW_REPORT.md], optional_artifacts: [PRD.md], input_budget_tokens: 30000, max_rag_chunks: 0, max_lessons: 4, lesson_budget_tokens: 1800, file_mode: selected, file_globs: [generated_app/backend/tests/**, generated_app/frontend/**test**, generated_app/frontend/package.json] }
+    - id: Visual QA Agent
+      type: agent
+      phase: visual_qa
+      skill: visual_qa_agent
+      model_role: reasoning
+      max_output_tokens: 4000
+      observation_max_output_tokens: 3500
+      outputs: [VISUAL_QA_REPORT.md]
+      allowed_tools: [visual_tests]
+      context_policy: { version: 2.12.0, allowed_reference_types: [artifact, file, test, lesson], required_artifacts: [UX_SPEC.md], optional_artifacts: [PRD.md], input_budget_tokens: 16000, max_rag_chunks: 0, max_lessons: 3, lesson_budget_tokens: 1200, file_mode: selected, file_globs: [generated_app/frontend/app/**, generated_app/frontend/components/**, generated_app/frontend/**/*.css] }
+    - id: Accessibility QA Agent
+      type: agent
+      phase: accessibility_qa
+      skill: accessibility_qa_agent
+      model_role: reasoning
+      max_output_tokens: 4000
+      observation_max_output_tokens: 3500
+      outputs: [ACCESSIBILITY_REPORT.md]
+      allowed_tools: [accessibility_tests]
+      context_policy: { version: 2.12.0, allowed_reference_types: [artifact, file, test, lesson], required_artifacts: [UX_SPEC.md, VISUAL_QA_REPORT.md], input_budget_tokens: 16000, max_rag_chunks: 0, max_lessons: 3, lesson_budget_tokens: 1200, file_mode: selected, file_globs: [generated_app/frontend/app/**, generated_app/frontend/components/**, generated_app/frontend/**/*.css] }
+    - id: Security Engineer
+      type: agent
+      phase: security_review
+      skill: security_engineer
+      model_role: reasoning
+      max_output_tokens: 5000
+      observation_max_output_tokens: 4500
+      outputs: [SECURITY_REVIEW.md]
+      allowed_tools: [security_scan]
+      context_policy: { version: 2.12.0, allowed_reference_types: [artifact, file, test, decision, lesson], required_artifacts: [SYSTEM_DESIGN.md, API_SPEC.md], optional_artifacts: [DATA_MODEL.md, REVIEW_REPORT.md], input_budget_tokens: 22000, max_rag_chunks: 0, max_lessons: 4, lesson_budget_tokens: 1800, file_mode: selected, file_globs: [generated_app/backend/**, generated_app/**/middleware.*, generated_app/**/auth*] }
+    - id: DevOps Engineer
+      type: agent
+      phase: devops_packaging
+      skill: devops_engineer
+      model_role: reasoning
+      max_output_tokens: 4500
+      outputs: [DEPLOYMENT.md]
+      context_policy: { version: 2.12.0, allowed_reference_types: [artifact, file_tree, test, lesson], required_artifacts: [SYSTEM_DESIGN.md, SECURITY_REVIEW.md], optional_artifacts: [TEST_REPORT.md], input_budget_tokens: 16000, max_rag_chunks: 0, max_lessons: 3, lesson_budget_tokens: 1200, file_mode: tree }
+    - id: Release Manager
+      type: agent
+      phase: release_management
+      skill: release_manager
+      model_role: fast
+      max_output_tokens: 2500
+      outputs: [RELEASE_NOTES.md]
+      context_policy: { version: 2.12.0, allowed_reference_types: [artifact, test, decision, lesson], required_artifacts: [TEST_REPORT.md, VISUAL_QA_REPORT.md, ACCESSIBILITY_REPORT.md, SECURITY_REVIEW.md, DEPLOYMENT.md], input_budget_tokens: 12000, max_rag_chunks: 0, max_lessons: 2, lesson_budget_tokens: 800, file_mode: none }
+    - id: Quality Governor
+      type: agent
+      phase: quality_governance
+      skill: quality_governor
+      model_role: reasoning
+      max_output_tokens: 6000
+      outputs: [HOMOLOGATION_REPORT.md]
+      context_policy: { version: 2.12.0, allowed_reference_types: [artifact, test, decision, lesson], required_artifacts: [ACCEPTANCE_CRITERIA.md, TEST_REPORT.md, VISUAL_QA_REPORT.md, ACCESSIBILITY_REPORT.md, SECURITY_REVIEW.md, RELEASE_NOTES.md], optional_artifacts: [DEPLOYMENT.md], input_budget_tokens: 22000, max_rag_chunks: 0, max_lessons: 3, lesson_budget_tokens: 1200, file_mode: none }
+    - { id: Human Approval, type: human_approval, phase: human_homologation_approval, skill: human_supervisor, ai_required: false }
+    - { id: FINAL, type: passthrough, phase: final_delivery, ai_required: false }
+  edges:
+    - { from: USER, to: Demand Classifier, condition: true }
+    - { from: Demand Classifier, to: Acceptance Criteria Architect, condition: success }
+    - { from: Acceptance Criteria Architect, to: Scope Governor, condition: success }
+    - { from: Scope Governor, to: Product Manager, condition: success }
+    - { from: Product Manager, to: UX UI Designer, condition: success }
+    - { from: UX UI Designer, to: Architect, condition: success }
+    - { from: Architect, to: Data Architect, condition: success }
+    - { from: Data Architect, to: API Contract Engineer, condition: success }
+    - { from: API Contract Engineer, to: Project Manager, condition: success }
+    - { from: Project Manager, to: Engineer, condition: success }
+    - { from: Engineer, to: Code Reviewer, condition: success }
+    - { from: Code Reviewer, to: Engineer, condition: needs_changes, max_iterations: 2 }
+    - { from: Code Reviewer, to: QA Engineer, condition: approved }
+    - { from: QA Engineer, to: Engineer, condition: tests_failed, max_iterations: 2 }
+    - { from: QA Engineer, to: Visual QA Agent, condition: tests_passed }
+    - { from: Visual QA Agent, to: Accessibility QA Agent, condition: passed }
+    - { from: Accessibility QA Agent, to: Security Engineer, condition: passed }
+    - { from: Security Engineer, to: DevOps Engineer, condition: passed }
+    - { from: DevOps Engineer, to: Release Manager, condition: success }
+    - { from: Release Manager, to: Quality Governor, condition: success }
+    - { from: Quality Governor, to: Human Approval, condition: approved_for_homologation }
+    - { from: Human Approval, to: FINAL, condition: approved }

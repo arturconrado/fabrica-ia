@@ -4,8 +4,16 @@ import httpx
 import pytest
 
 
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+os.environ.setdefault("ASF_DATABASE_URL", "sqlite:///:memory:")
+os.environ["ASF_RUNTIME_PROFILE"] = "test"
+os.environ["ASF_AGENT_PROVIDER"] = "mock"
+os.environ["ASF_WORKFLOW_BACKEND"] = "homologation"
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "production_stack: requires a running production-only ASF stack")
+    config.addinivalue_line("markers", "postgres_hardening: requires a migrated PostgreSQL test database")
 
 
 @pytest.fixture(scope="session")

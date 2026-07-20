@@ -1,0 +1,45 @@
+groups:
+  - name: asf-pilot
+    rules:
+      - alert: AsfApiUnavailable
+        expr: up{job="asf-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Agentic Software Factory API is unavailable
+      - alert: AsfApiServerErrors
+        expr: increase(asf_http_requests_total{status_class="5xx"}[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Elevated API server errors during the assisted pilot
+      - alert: AsfWorkflowCapacityExhausted
+        expr: asf_workflow_slots_in_use >= 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: All assisted-pilot workflow slots are occupied
+      - alert: AsfWorkflowSlotStale
+        expr: asf_oldest_workflow_slot_age_seconds > 7200
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: A workflow capacity slot may be orphaned
+      - alert: AsfTemporalCommandStuck
+        expr: asf_temporal_outbox_oldest_age_seconds > 300 or asf_temporal_outbox_max_attempts >= 5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: A durable Temporal command is not being dispatched
+      - alert: AsfBackupMissingOrStale
+        expr: asf_backup_newest_age_seconds < 0 or asf_backup_newest_age_seconds > 93600
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: A local or offsite backup dataset is missing or older than 26 hours

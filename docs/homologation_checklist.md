@@ -1,60 +1,45 @@
-# Homologation Checklist
+# Checklist de homologação
 
-Release production-only fica bloqueado até todos os itens críticos passarem no ambiente alvo.
+## Automatizado
 
-## Runtime
-- [x] API valida configuração production-only no startup.
-- [x] Rotas operacionais exigem JWT OIDC e tenant.
-- [x] Runtime usa LiteLLM com OpenRouter/OpenAI real como provider obrigatório.
-- [x] Runs e ações humanas usam Temporal workflow id.
-- [x] Sandbox local/process-only foi removido do caminho operacional.
-- [x] MCP provider production-named usa allowlist por tenant.
+- [x] Banco fresco inicia sem tenant, cliente, projeto, crédito, run, agent ou histórico demonstrativo.
+- [x] API cobre cinco tenants, RLS/RAG, artifacts, review, papéis, topologia e XP idempotente.
+- [x] Next.js compila as 28 rotas e os tipos são gerados do OpenAPI.
+- [x] Compose base e VPS passam em `config` com configuração válida.
+- [x] Migration fresca `0006_ai_native_workflow_v2` passa upgrade e downgrade.
+- [x] Playwright consolidado passa PKCE, refresh, menus, ações, zero-mock, axe, teclado, reduced motion e quatro breakpoints (`4 passed, 1 skipped`).
+- [ ] Playwright do cockpit passa com `ASF_TEST_COMPLETED_RUN_ID` de uma run contratada deste corte.
 
-## Factory Operation
-- [x] `POST /runs/enterprise` cria run antes de agendar Temporal.
-- [x] UI navega para `/runs/{run_id}` com run real tenant-scoped.
-- [x] Agent roster, work items, messages, events, artifacts and files remain visible.
-- [x] Model calls are exposed globally and per run.
-- [x] Sandbox executions are exposed globally and per run.
-- [x] Approval, reject and request-changes signal Temporal before local mutation.
+## Segurança e dados
 
-## Quality And Evidence
-- [x] Requirements, acceptance criteria, traceability, tests, gates and HRS models remain implemented.
-- [x] Homologation package generation remains implemented.
-- [x] Feedback creates reward and learning records.
-- [x] Batch scheduling creates child runs and metrics.
+- [x] Tokens ficam fora do DOM e dos storages; BFF encaminha bearer/tenant.
+- [x] Endpoints técnicos e administrativos aplicam RBAC no servidor.
+- [x] Reviewer não recebe logs, prompts, custos internos, runtime ou diffs.
+- [x] Artifacts externos exigem audience e promoção/package.
+- [x] RAG e objetos usam tenant/RLS/prefixo exclusivo; consulta cross-tenant falha.
+- [x] Seed e mocks ficam fora dos perfis operacionais; AFlow permanece invisível.
+- [ ] Chave exposta foi revogada e a substituta está somente no secret manager/env local.
+- [ ] Cinco tenants reais foram provisionados em banco operacional limpo, com membership do operador e bases RAG separadas.
+- [ ] Testes adversariais da matriz completa de papéis passaram na stack alvo.
 
-## Required Manual Validation
-- [ ] `make docker-full-up` creates/reuses kind cluster `asf-local` through the Docker control container.
-- [ ] kind applies sandbox namespace, RBAC, deny-all NetworkPolicy and `asf-sandbox-workspaces` PV/PVC.
-- [ ] Docker Compose config succeeds with `ASF_DOCKER_KUBECONFIG=data/kube/asf-local-internal.kubeconfig`.
-- [ ] Docker Compose starts API, web, Postgres, Redis, Temporal, worker, MinIO, Keycloak and LiteLLM.
-- [ ] MinIO init creates bucket `software-factory-artifacts`.
-- [ ] `GET /health` returns ok.
-- [ ] Keycloak token accepted by `GET /auth/me`.
-- [ ] `Start Enterprise Build` works from UI with real LLM calls.
-- [ ] SSE timeline shows progressive agent events.
-- [ ] At least five agents change state during operation.
-- [ ] `generated_app` is created.
-- [ ] Kubernetes sandbox mounts PVC with `subPath={run_id}` and runs `python -m pytest generated_app/tests`.
-- [ ] Initial pytest failure and generated correction are recorded.
-- [ ] Final pytest passes.
-- [ ] 17 quality gates are visible.
-- [ ] HRS is calculated and is >= 90.
-- [ ] Homologation package is created.
-- [ ] Human approval pauses and finalizes the run.
-- [ ] Pause/step controls stop between per-agent Temporal activities, not only at persisted API state.
-- [ ] Feedback creates `HumanFeedback`, `RewardSignal` and `LearningLesson`.
-- [ ] `POST /batches` schedules child runs and metrics.
-- [ ] Tenant isolation negative test passes.
-- [ ] Protected route without JWT fails.
-- [ ] MCP denied tool call is rejected and audited.
-- [ ] Sandbox rejects non-allowlisted command and missing workspace PVC.
-- [ ] `make docker-full-validate` passes API-container pytest, enterprise run evidence, batch metrics, Docker frontend build and containerized Playwright.
-- [ ] `docker compose -f docker-compose.vps.yml config` passes with `.env.vps`.
-- [ ] VPS firewall exposes only `22`, `80` and `443` publicly.
-- [ ] `make vps-docker-up` starts the VPS production Docker stack.
-- [ ] `https://$ASF_PUBLIC_DOMAIN` opens the builder.
-- [ ] `https://$ASF_API_DOMAIN/health` returns ok.
-- [ ] `https://$ASF_AUTH_DOMAIN` emits OIDC tokens with public issuer.
-- [ ] `make vps-docker-validate` passes public API, OIDC, enterprise run, sandbox, HRS, delivery package and batch gates.
+## Missão real e entrega
+
+- [ ] Missão criada pela UI pelo fluxo contratado, sem endpoint técnico direto.
+- [ ] ContractFlow e ServiceDesk executaram `software_factory_ai_native_v2` com modelos por papel e custo real de até US$ 15 por missão.
+- [ ] SSE, papéis/SOPs, handoffs, loops e topologia correspondem ao YAML persistido.
+- [ ] Artifacts Markdown, `FileChange`, diffs e evidências foram persistidos.
+- [ ] Sandbox executou backend tests/smoke, frontend tests/build, Playwright visual, axe e Bandit; qualquer falha real gerou correção e novo passe.
+- [ ] Quality gates e HRS foram calculados sem influência de XP.
+- [ ] Reviewer recebeu somente a projeção segura e registrou decisão idempotente.
+- [ ] Homologation package foi promovido, aprovado e entregue.
+- [ ] XP resultante referencia os ledger records corretos sem duplicação.
+- [ ] Validation manifests comprovam todos os vínculos modelo→artifact/arquivo e fingerprints/propostas distintos.
+
+## Operação
+
+- [ ] Pause/step/resume e restart do worker foram comprovados.
+- [ ] MCP negado e comando de sandbox não allowlisted foram bloqueados e auditados.
+- [ ] Restore limpo, RPO/RTO, backup offsite e alerta real foram comprovados.
+- [ ] VPS expõe somente portas autorizadas e passa o validador público OIDC/API/web.
+
+A homologação só fecha quando todos os itens de missão real, segurança crítica e operação estiverem marcados com evidência anexada.

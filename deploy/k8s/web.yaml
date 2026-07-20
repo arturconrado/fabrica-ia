@@ -20,9 +20,19 @@ spec:
             - containerPort: 3000
           env:
             - name: NEXT_PUBLIC_API_BASE_URL
-              value: https://api.example.com
-            - name: NEXT_PUBLIC_DEFAULT_TENANT_ID
-              value: production
+              value: /api-proxy
+            - name: API_INTERNAL_BASE_URL
+              value: http://software-factory-api:8000
+            - name: OIDC_ISSUER_URL
+              value: https://identity.example.com/realms/software-factory
+            - name: OIDC_PUBLIC_ISSUER_URL
+              value: https://identity.example.com/realms/software-factory
+            - name: OIDC_CLIENT_ID
+              value: software-factory-web
+            - name: APP_BASE_URL
+              value: https://factory.example.com
+            - name: SESSION_COOKIE_SECURE
+              value: "true"
 ---
 apiVersion: v1
 kind: Service

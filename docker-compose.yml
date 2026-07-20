@@ -6,9 +6,9 @@ services:
       POSTGRES_USER: factory
       POSTGRES_PASSWORD: factory
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - ${ASF_DATA_ROOT:-./data}/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U factory -d factory"]
       interval: 10s
@@ -16,9 +16,10 @@ services:
       retries: 10
 
   redis:
+    profiles: ["full"]
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -26,13 +27,14 @@ services:
       retries: 10
 
   temporal-postgres:
+    profiles: ["full"]
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: temporal
       POSTGRES_USER: temporal
       POSTGRES_PASSWORD: temporal
     volumes:
-      - ./data/temporal-postgres:/var/lib/postgresql/data
+      - ${ASF_DATA_ROOT:-./data}/temporal-postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U temporal -d temporal"]
       interval: 10s
@@ -40,6 +42,7 @@ services:
       retries: 10
 
   temporal:
+    profiles: ["full"]
     image: temporalio/auto-setup:1.25
     environment:
       DB: postgres12
@@ -48,32 +51,33 @@ services:
       POSTGRES_PWD: temporal
       POSTGRES_SEEDS: temporal-postgres
     ports:
-      - "7233:7233"
+      - "127.0.0.1:7233:7233"
     depends_on:
       temporal-postgres:
         condition: service_healthy
 
   temporal-ui:
+    profiles: ["full"]
     image: temporalio/ui:2.31.2
     environment:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_CORS_ORIGINS: http://localhost:3000
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       - temporal
 
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
-      - ./data/minio:/data
+      - ${ASF_DATA_ROOT:-./data}/minio:/data
 
   minio-init:
     image: minio/mc:RELEASE.2025-04-16T18-13-26Z
@@ -92,76 +96,216 @@ services:
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://localhost:8081
+      KC_HOSTNAME_STRICT: "false"
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
     volumes:
-      - ./data/keycloak:/opt/keycloak/data
+      - ${ASF_DATA_ROOT:-./data}/keycloak/h2:/opt/keycloak/data/h2
       - ./deploy/keycloak/software-factory-realm.json:/opt/keycloak/data/import/software-factory-realm.json:ro
+
+  mailpit:
+    profiles: ["full"]
+    image: axllent/mailpit:v1.21
+    ports:
+      - "127.0.0.1:8025:8025"
+      - "127.0.0.1:1025:1025"
+
+  prometheus:
+    profiles: ["full"]
+    image: prom/prometheus:v2.55.1
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+
+  tempo:
+    profiles: ["full"]
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo.yml"]
+    volumes:
+      - ./deploy/observability/tempo.yml:/etc/tempo.yml:ro
+      - ${ASF_DATA_ROOT:-./data}/tempo:/var/tempo
+    ports:
+      - "127.0.0.1:3200:3200"
+
+  otel-collector:
+    profiles: ["full"]
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    command: ["--config=/etc/otel-collector.yml"]
+    volumes:
+      - ./deploy/observability/otel-collector.yml:/etc/otel-collector.yml:ro
+    ports:
+      - "127.0.0.1:4318:4318"
+    depends_on:
+      - tempo
+
+  grafana:
+    profiles: ["full"]
+    image: grafana/grafana:11.3.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./deploy/observability/grafana-datasources.yml:/etc/grafana/provisioning/datasources/asf.yml:ro
+    ports:
+      - "127.0.0.1:3001:3000"
 
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
-    command: ["--host", "0.0.0.0", "--port", "4000"]
+    command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000"]
     environment:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      LITELLM_MASTER_KEY: ${ASF_LITELLM_API_KEY:?Set ASF_LITELLM_API_KEY for LiteLLM}
+      ASF_FAST_UPSTREAM_MODEL: ${ASF_FAST_UPSTREAM_MODEL:-openrouter/google/gemini-3.1-flash-lite}
+      ASF_REASONING_UPSTREAM_MODEL: ${ASF_REASONING_UPSTREAM_MODEL:-openrouter/anthropic/claude-sonnet-4.6}
+      ASF_CODE_UPSTREAM_MODEL: ${ASF_CODE_UPSTREAM_MODEL:-openrouter/anthropic/claude-sonnet-4.6}
+      LITELLM_MASTER_KEY: ${ASF_LITELLM_API_KEY:-local-full-litellm-key}
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
+    volumes:
+      - ./deploy/litellm/config.yaml:/app/config.yaml:ro
+
+  migrate:
+    build:
+      context: ./apps/api
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://factory:factory@postgres:5432/factory
+      ASF_DATABASE_URL: postgresql+psycopg://factory:factory@postgres:5432/factory
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  db-role-init:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: factory
+      PGPASSWORD: factory
+      PGDATABASE: factory
+      ASF_POSTGRES_APP_PASSWORD: ${ASF_POSTGRES_APP_PASSWORD:-factory_app}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        psql -v ON_ERROR_STOP=1 --set=app_password="$$ASF_POSTGRES_APP_PASSWORD" <<'SQL'
+        SELECT format('CREATE ROLE factory_app LOGIN PASSWORD %L', :'app_password')
+        WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'factory_app') \gexec
+        SELECT format('ALTER ROLE factory_app LOGIN PASSWORD %L NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT', :'app_password') \gexec
+        GRANT CONNECT ON DATABASE factory TO factory_app;
+        GRANT USAGE ON SCHEMA public TO factory_app;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO factory_app;
+        GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO factory_app;
+        ALTER DEFAULT PRIVILEGES FOR ROLE factory IN SCHEMA public
+          GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO factory_app;
+        ALTER DEFAULT PRIVILEGES FOR ROLE factory IN SCHEMA public
+          GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO factory_app;
+        GRANT EXECUTE ON FUNCTION public.asf_aggregate_technical_metrics() TO factory_app;
+        SQL
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  local-onboarding:
+    build:
+      context: ./apps/api
+    command:
+      - python
+      - -m
+      - app.cli.bootstrap_tenant
+      - --tenant-id
+      - ${ASF_DEFAULT_TENANT_ID:-local-dev}
+      - --tenant-name
+      - ${ASF_DEFAULT_TENANT_NAME:-Local Development}
+      - --subject
+      - ${ASF_LOCAL_OPERATOR_SUBJECT:-11111111-1111-4111-8111-111111111111}
+      - --email
+      - ${ASF_LOCAL_KEYCLOAK_USER:-operator@local.dev}
+      - --name
+      - Local Operator
+      - --confirm
+      - bootstrap assisted pilot tenant
+    environment:
+      DATABASE_URL: postgresql+psycopg://factory:factory@postgres:5432/factory
+      ASF_DATABASE_URL: postgresql+psycopg://factory:factory@postgres:5432/factory
+      ASF_RUNTIME_PROFILE: homologation
+      ASF_DEFAULT_TENANT_ID: ${ASF_DEFAULT_TENANT_ID:-local-dev}
+      ASF_DEFAULT_TENANT_NAME: ${ASF_DEFAULT_TENANT_NAME:-Local Development}
+    depends_on:
+      db-role-init:
+        condition: service_completed_successfully
 
   api:
     build:
       context: ./apps/api
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
-      DATABASE_URL: postgresql+psycopg://factory:factory@postgres:5432/factory
-      ASF_DATABASE_URL: postgresql+psycopg://factory:factory@postgres:5432/factory
+      DATABASE_URL: postgresql+psycopg://factory_app:${ASF_POSTGRES_APP_PASSWORD:-factory_app}@postgres:5432/factory
+      ASF_DATABASE_URL: postgresql+psycopg://factory_app:${ASF_POSTGRES_APP_PASSWORD:-factory_app}@postgres:5432/factory
       ASF_ENVIRONMENT: local
+      ASF_RUNTIME_PROFILE: homologation
       ASF_DATA_DIR: /data
-      ASF_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
-      ASF_DEFAULT_TENANT_ID: local-dev
-      ASF_DEFAULT_TENANT_NAME: Local Development
+      ASF_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://web:3000,http://web-test:3000
+      ASF_DEFAULT_TENANT_ID: ${ASF_DEFAULT_TENANT_ID:-local-dev}
+      ASF_DEFAULT_TENANT_NAME: ${ASF_DEFAULT_TENANT_NAME:-Local Development}
       ASF_AUTH_DISABLED: "false"
       ASF_DEV_AUTH_TOKEN: ""
       ASF_OIDC_ISSUER_URL: http://localhost:8081/realms/software-factory
       ASF_OIDC_AUDIENCE: software-factory-web
       ASF_OIDC_JWKS_URL: http://keycloak:8080/realms/software-factory/protocol/openid-connect/certs
       ASF_AGENT_PROVIDER: litellm
-      ASF_AGENT_STEP_DELAY_MS: ${ASF_AGENT_STEP_DELAY_MS:-900}
-      ASF_WORKFLOW_BACKEND: temporal
+      ASF_AGENT_STEP_DELAY_MS: ${ASF_AGENT_STEP_DELAY_MS:-50}
+      ASF_WORKFLOW_BACKEND: homologation
       ASF_TEMPORAL_ADDRESS: temporal:7233
-      ASF_LITELLM_BASE_URL: http://litellm:4000
-      ASF_LITELLM_API_KEY: ${ASF_LITELLM_API_KEY:?Set ASF_LITELLM_API_KEY for LiteLLM}
-      ASF_MCP_ENABLED: "true"
+      ASF_LITELLM_BASE_URL: ${ASF_LITELLM_BASE_URL:-http://litellm:4000}
+      ASF_LITELLM_API_KEY: ${ASF_LITELLM_API_KEY:-local-full-litellm-key}
+      ASF_DEFAULT_MODEL: ${ASF_DEFAULT_MODEL:-asf-default}
+      ASF_ENCRYPTION_KEY: ${ASF_ENCRYPTION_KEY:-local-development-encryption-key}
+      ASF_MCP_ENABLED: "false"
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      ASF_SANDBOX_BACKEND: kubernetes
-      ASF_SANDBOX_KUBECONFIG: /kube/config
-      ASF_SANDBOX_WORKSPACE_PVC: ${ASF_SANDBOX_WORKSPACE_PVC:-asf-sandbox-workspaces}
-      ASF_SANDBOX_WORKSPACE_MOUNT_PATH: /workspace
-      ASF_SANDBOX_RUNTIME_CLASS: ${ASF_SANDBOX_RUNTIME_CLASS:-}
-      ASF_SANDBOX_IMAGE: ${ASF_SANDBOX_IMAGE:-asf-sandbox-runner:local}
+      ASF_SANDBOX_BACKEND: local_trusted
+      ASF_OTEL_EXPORTER_OTLP_ENDPOINT: ""
+      ASF_PILOT_MAX_TENANTS: "10"
+      ASF_PILOT_MAX_USERS_PER_TENANT: "20"
+      ASF_PILOT_MAX_CONCURRENT_WORKFLOWS: "10"
+      ASF_PILOT_MAX_CONCURRENT_WORKFLOWS_PER_TENANT: "2"
+      ASF_KNOWLEDGE_MAX_BASES_PER_TENANT: ${ASF_KNOWLEDGE_MAX_BASES_PER_TENANT:-10}
+      ASF_KNOWLEDGE_MAX_DOCUMENTS_PER_TENANT: ${ASF_KNOWLEDGE_MAX_DOCUMENTS_PER_TENANT:-250}
+      ASF_KNOWLEDGE_MAX_DOCUMENT_CHARS: ${ASF_KNOWLEDGE_MAX_DOCUMENT_CHARS:-250000}
+      ASF_KNOWLEDGE_MAX_TOTAL_CHARS_PER_TENANT: ${ASF_KNOWLEDGE_MAX_TOTAL_CHARS_PER_TENANT:-5000000}
+      ASF_KNOWLEDGE_CHUNK_CHARS: ${ASF_KNOWLEDGE_CHUNK_CHARS:-1200}
+      ASF_KNOWLEDGE_CHUNK_OVERLAP_CHARS: ${ASF_KNOWLEDGE_CHUNK_OVERLAP_CHARS:-180}
+      ASF_KNOWLEDGE_MAX_QUERY_RESULTS: ${ASF_KNOWLEDGE_MAX_QUERY_RESULTS:-8}
+      ASF_GENERATIVE_BUILD_ENABLED: "false"
+      ASF_SERVICE_DELIVERY_OS_ENABLED: "true"
+      ASF_SERVICE_WIP_GLOBAL_LIMIT: ${ASF_SERVICE_WIP_GLOBAL_LIMIT:-5}
+      ASF_SERVICE_WIP_PER_TENANT_LIMIT: ${ASF_SERVICE_WIP_PER_TENANT_LIMIT:-2}
+      ASF_AGENT_CANDIDATE_EVALUATION_REPETITIONS: ${ASF_AGENT_CANDIDATE_EVALUATION_REPETITIONS:-3}
       ASF_S3_ENDPOINT_URL: http://minio:9000
     volumes:
-      - ./data/api:/data
-      - ${ASF_DOCKER_KUBECONFIG:-./data/kube/asf-local-internal.kubeconfig}:/kube/config:ro
+      - ${ASF_DATA_ROOT:-./data}/api:/data
       - ./workflows:/app/workflows:ro
+      - ./benchmarks:/app/benchmarks:ro
       - ./skills:/app/skills:ro
       - ./prompts:/app/prompts:ro
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
-      temporal:
+      migrate:
+        condition: service_completed_successfully
+      db-role-init:
+        condition: service_completed_successfully
+      local-onboarding:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_started
+      litellm:
         condition: service_started
       minio-init:
         condition: service_completed_successfully
-      litellm:
-        condition: service_started
-    networks:
-      - default
-      - kind
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
@@ -169,39 +313,39 @@ services:
       retries: 10
 
   temporal-worker:
+    profiles: ["full"]
     build:
       context: ./apps/api
     command: ["python", "-m", "app.worker"]
     environment:
-      DATABASE_URL: postgresql+psycopg://factory:factory@postgres:5432/factory
-      ASF_DATABASE_URL: postgresql+psycopg://factory:factory@postgres:5432/factory
+      DATABASE_URL: postgresql+psycopg://factory_app:${ASF_POSTGRES_APP_PASSWORD:-factory_app}@postgres:5432/factory
+      ASF_DATABASE_URL: postgresql+psycopg://factory_app:${ASF_POSTGRES_APP_PASSWORD:-factory_app}@postgres:5432/factory
       ASF_ENVIRONMENT: local
+      ASF_RUNTIME_PROFILE: homologation
       ASF_DATA_DIR: /data
-      ASF_DEFAULT_TENANT_ID: local-dev
+      ASF_DEFAULT_TENANT_ID: ${ASF_DEFAULT_TENANT_ID:-local-dev}
       ASF_AUTH_DISABLED: "false"
       ASF_DEV_AUTH_TOKEN: ""
       ASF_OIDC_ISSUER_URL: http://localhost:8081/realms/software-factory
       ASF_OIDC_AUDIENCE: software-factory-web
       ASF_OIDC_JWKS_URL: http://keycloak:8080/realms/software-factory/protocol/openid-connect/certs
       ASF_AGENT_PROVIDER: litellm
-      ASF_AGENT_STEP_DELAY_MS: ${ASF_AGENT_STEP_DELAY_MS:-900}
+      ASF_AGENT_STEP_DELAY_MS: ${ASF_AGENT_STEP_DELAY_MS:-50}
       ASF_WORKFLOW_BACKEND: temporal
       ASF_TEMPORAL_ADDRESS: temporal:7233
-      ASF_LITELLM_BASE_URL: http://litellm:4000
-      ASF_LITELLM_API_KEY: ${ASF_LITELLM_API_KEY:?Set ASF_LITELLM_API_KEY for LiteLLM}
+      ASF_LITELLM_BASE_URL: ${ASF_LITELLM_BASE_URL:-http://litellm:4000}
+      ASF_LITELLM_API_KEY: ${ASF_LITELLM_API_KEY:-local-full-litellm-key}
+      ASF_DEFAULT_MODEL: ${ASF_DEFAULT_MODEL:-asf-default}
+      ASF_ENCRYPTION_KEY: ${ASF_ENCRYPTION_KEY:-local-development-encryption-key}
       ASF_MCP_ENABLED: "true"
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      ASF_SANDBOX_BACKEND: kubernetes
-      ASF_SANDBOX_KUBECONFIG: /kube/config
-      ASF_SANDBOX_WORKSPACE_PVC: ${ASF_SANDBOX_WORKSPACE_PVC:-asf-sandbox-workspaces}
-      ASF_SANDBOX_WORKSPACE_MOUNT_PATH: /workspace
-      ASF_SANDBOX_RUNTIME_CLASS: ${ASF_SANDBOX_RUNTIME_CLASS:-}
-      ASF_SANDBOX_IMAGE: ${ASF_SANDBOX_IMAGE:-asf-sandbox-runner:local}
+      ASF_SANDBOX_BACKEND: local_trusted
+      ASF_OTEL_EXPORTER_OTLP_ENDPOINT: ""
     volumes:
-      - ./data/api:/data
-      - ${ASF_DOCKER_KUBECONFIG:-./data/kube/asf-local-internal.kubeconfig}:/kube/config:ro
+      - ${ASF_DATA_ROOT:-./data}/api:/data
       - ./workflows:/app/workflows:ro
+      - ./benchmarks:/app/benchmarks:ro
       - ./skills:/app/skills:ro
       - ./prompts:/app/prompts:ro
     depends_on:
@@ -209,25 +353,22 @@ services:
         condition: service_healthy
       temporal:
         condition: service_started
-    networks:
-      - default
-      - kind
 
   web:
     build:
       context: ./apps/web
       args:
-        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
-        NEXT_PUBLIC_DEFAULT_TENANT_ID: local-dev
-        NEXT_PUBLIC_OIDC_ISSUER_URL: http://localhost:8081/realms/software-factory
-        NEXT_PUBLIC_OIDC_CLIENT_ID: software-factory-web
+        NEXT_PUBLIC_API_BASE_URL: /api-proxy
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
-      NEXT_PUBLIC_DEFAULT_TENANT_ID: local-dev
-      NEXT_PUBLIC_OIDC_ISSUER_URL: http://localhost:8081/realms/software-factory
-      NEXT_PUBLIC_OIDC_CLIENT_ID: software-factory-web
+      NEXT_PUBLIC_API_BASE_URL: /api-proxy
+      API_INTERNAL_BASE_URL: http://api:8000
+      OIDC_ISSUER_URL: http://keycloak:8080/realms/software-factory
+      OIDC_PUBLIC_ISSUER_URL: http://localhost:8081/realms/software-factory
+      OIDC_CLIENT_ID: software-factory-web
+      APP_BASE_URL: http://localhost:3000
+      SESSION_COOKIE_SECURE: "false"
     depends_on:
       api:
         condition: service_healthy
@@ -237,15 +378,15 @@ services:
     build:
       context: ./apps/web
       args:
-        NEXT_PUBLIC_API_BASE_URL: http://api:8000
-        NEXT_PUBLIC_DEFAULT_TENANT_ID: local-dev
-        NEXT_PUBLIC_OIDC_ISSUER_URL: http://keycloak:8080/realms/software-factory
-        NEXT_PUBLIC_OIDC_CLIENT_ID: software-factory-web
+        NEXT_PUBLIC_API_BASE_URL: /api-proxy
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://api:8000
-      NEXT_PUBLIC_DEFAULT_TENANT_ID: local-dev
-      NEXT_PUBLIC_OIDC_ISSUER_URL: http://keycloak:8080/realms/software-factory
-      NEXT_PUBLIC_OIDC_CLIENT_ID: software-factory-web
+      NEXT_PUBLIC_API_BASE_URL: /api-proxy
+      API_INTERNAL_BASE_URL: http://api:8000
+      OIDC_ISSUER_URL: http://keycloak:8080/realms/software-factory
+      OIDC_PUBLIC_ISSUER_URL: http://localhost:8081/realms/software-factory
+      OIDC_CLIENT_ID: software-factory-web
+      APP_BASE_URL: http://localhost:3000
+      SESSION_COOKIE_SECURE: "false"
     depends_on:
       api:
         condition: service_healthy
@@ -261,14 +402,11 @@ services:
       context: ./apps/web
       dockerfile: Dockerfile.e2e
     environment:
-      PLAYWRIGHT_BASE_URL: http://web-test:3000
-      ASF_TEST_TENANT_ID: local-dev
+      PLAYWRIGHT_BASE_URL: http://localhost:3000
+      ASF_TEST_TENANT_ID: ${ASF_TEST_TENANT_ID:-local-dev}
     depends_on:
       web-test:
         condition: service_healthy
 
 networks:
   default:
-  kind:
-    external: true
-    name: kind

@@ -21,8 +21,3 @@
 	encode gzip zstd
 	reverse_proxy minio:9001
 }
-
-{$ASF_TEMPORAL_DOMAIN} {
-	encode gzip zstd
-	reverse_proxy temporal-ui:8080
-}

@@ -3,35 +3,48 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import Principal, audit, get_current_principal, require_roles
+from app.auth.dependencies import Principal, audit, require_roles
 from app.db.session import get_db
+from app.core.config import get_settings
 from app.models import Batch, BatchItem, BatchMetric, Project, WorkflowRun
-from app.providers.temporal_runner import TemporalWorkflowRunner
 from app.services.serialization import model_to_dict, models_to_dict
+from app.service_delivery.capacity import acquire_workflow_slot
+from app.workflow.temporal_outbox import enqueue_start
+from app.schemas import BatchCreate
 
 router = APIRouter(prefix="/batches", tags=["batches"])
+get_current_principal = require_roles("owner", "super_admin", "tenant_admin", "engagement_manager", "consultant", "admin", "operator")
 
 
 @router.post("")
-async def post_batch(principal: Principal = Depends(require_roles("owner", "admin", "operator")), db: Session = Depends(get_db)):
-    batch = Batch(id=str(uuid.uuid4()), tenant_id=principal.tenant_id, name="Enterprise Portfolio Batch", status="running", total_items=3)
+async def post_batch(
+    payload: BatchCreate,
+    principal: Principal = Depends(require_roles("owner", "admin", "operator")),
+    db: Session = Depends(get_db),
+):
+    project_ids = [item.project_id for item in payload.items]
+    projects = db.query(Project).filter(Project.tenant_id == principal.tenant_id, Project.id.in_(project_ids)).all()
+    project_by_id = {project.id: project for project in projects}
+    missing = sorted(set(project_ids).difference(project_by_id))
+    if missing:
+        raise HTTPException(status_code=404, detail={"code": "BATCH_PROJECT_NOT_FOUND", "project_ids": missing})
+    batch = Batch(
+        id=str(uuid.uuid4()),
+        tenant_id=principal.tenant_id,
+        name=payload.name.strip(),
+        status="running",
+        total_items=len(payload.items),
+    )
     db.add(batch)
     db.flush()
-    demands = [
-        ("ContractFlow Enterprise", "Crie um sistema para gestão de clientes, contratos e faturas."),
-        ("InventoryFlow Enterprise", "Crie um sistema para produtos, estoque e movimentações."),
-        ("HelpdeskFlow Enterprise", "Crie um sistema para tickets, prioridades e status."),
-    ]
-    for name, demand in demands:
-        project = Project(id=str(uuid.uuid4()), tenant_id=principal.tenant_id, name=name, description="Batch enterprise build item.")
-        db.add(project)
-        db.flush()
+    for item in payload.items:
+        project = project_by_id[item.project_id]
         run = WorkflowRun(
             id=str(uuid.uuid4()),
             tenant_id=principal.tenant_id,
             project_id=project.id,
             workflow_id="software_factory_homologation_v1",
-            demand=demand,
+            demand=item.demand.strip(),
             status="scheduled",
             current_phase="temporal_scheduled",
             current_node="Temporal Worker",
@@ -39,15 +52,9 @@ async def post_batch(principal: Principal = Depends(require_roles("owner", "admi
         )
         db.add(run)
         db.flush()
-        scheduled = await TemporalWorkflowRunner().start_enterprise_run(
-            tenant_id=principal.tenant_id,
-            demand=demand,
-            project_id=project.id,
-            run_id=run.id,
-        )
-        run.status = scheduled.status
-        run.temporal_workflow_id = scheduled.workflow_id
-        run.temporal_run_id = scheduled.run_id
+        acquire_workflow_slot(db, run.id)
+        enqueue_start(db, run)
+        run.status = "temporal_dispatch_pending"
         db.add(
             BatchItem(
                 id=str(uuid.uuid4()),
@@ -55,13 +62,13 @@ async def post_batch(principal: Principal = Depends(require_roles("owner", "admi
                 batch_id=batch.id,
                 project_id=project.id,
                 run_id=run.id,
-                demand=demand,
-                status=scheduled.status,
+                demand=item.demand.strip(),
+                status=run.status,
                 current_phase="temporal_scheduled",
             )
         )
-    db.add(BatchMetric(id=str(uuid.uuid4()), tenant_id=principal.tenant_id, batch_id=batch.id, name="scheduled_runs", value=3, metadata_json={}))
-    audit(db, principal, "batch.created", "batch", batch.id)
+    db.add(BatchMetric(id=str(uuid.uuid4()), tenant_id=principal.tenant_id, batch_id=batch.id, name="scheduled_runs", value=len(payload.items), metadata_json={"source": "operator_request"}))
+    audit(db, principal, "batch.created", "batch", batch.id, {"item_count": len(payload.items)})
     db.commit()
     db.refresh(batch)
     return model_to_dict(batch)

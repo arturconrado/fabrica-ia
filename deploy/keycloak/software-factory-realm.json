@@ -1,6 +1,7 @@
 {
   "realm": "software-factory",
   "enabled": true,
+  "sslRequired": "none",
   "displayName": "Agentic Software Factory",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,
@@ -11,9 +12,9 @@
       "enabled": true,
       "publicClient": true,
       "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": true,
-      "redirectUris": ["http://localhost:3000/*"],
-      "webOrigins": ["http://localhost:3000"],
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://localhost:3000/*", "http://web-test:3000/*"],
+      "webOrigins": ["http://localhost:3000", "http://web-test:3000"],
       "protocolMappers": [
         {
           "name": "tenant_id",
@@ -40,15 +41,54 @@
             "access.token.claim": "true",
             "userinfo.token.claim": "true"
           }
+        },
+        {
+          "name": "software-factory-web-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "software-factory-web",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false"
+          }
         }
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256"
       }
+    },
+    {
+      "clientId": "software-factory-validation",
+      "name": "ASF Local Validation (test profile only)",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "local-validation-only-change-me",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "attributes": {
+        "access.token.lifespan": "7200"
+      },
+      "protocolMappers": [
+        {
+          "name": "software-factory-web-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "software-factory-web",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
     }
   ],
   "users": [
     {
+      "id": "11111111-1111-4111-8111-111111111111",
       "username": "operator@local.dev",
       "email": "operator@local.dev",
       "firstName": "Local",

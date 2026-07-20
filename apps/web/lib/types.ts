@@ -1,7 +1,200 @@
-export type Dict = Record<string, any>;
+/**
+ * Compatibility shape for the remaining legacy operational endpoints.
+ *
+ * New command-center contracts live in `contracts.ts`; this interface keeps
+ * old detail views type-safe while their endpoint schemas are migrated to the
+ * generated OpenAPI types.  There is deliberately no `any` escape hatch.
+ */
+export interface Dict {
+  [key: string]: unknown;
+
+  id: string;
+  tenant_id: string;
+  project_id: string;
+  run_id: string;
+  batch_id: string;
+  workflow_id: string;
+  workflow_run_id: string;
+  temporal_workflow_id: string;
+  node_id: string;
+  event_id: string;
+  artifact_id: string;
+  requirement_id: string;
+  criterion_id: string;
+  gate_id: string;
+
+  name: string;
+  title: string;
+  description: string;
+  summary: string;
+  content: string;
+  status: string;
+  role: string;
+  action: string;
+  reason: string;
+  demand: string;
+  provider: string;
+  source: string;
+  subject: string;
+  email: string;
+  priority: string;
+  phase: string;
+  complexity: string;
+  comment: string;
+  gherkin: string;
+  company: string;
+  category: string;
+  classification: string;
+  evidence_classification: string;
+  audience: string;
+  artifact_type: string;
+  event_type: string;
+  activity_type: string;
+  resource_type: string;
+  message_type: string;
+  agent_name: string;
+  from_agent: string;
+  to_agent: string;
+  current_node: string;
+  current_phase: string;
+  current_sop_step: string;
+  sop_step: string;
+  objective: string;
+  requested_action: string;
+  risk_level: string;
+  human_comment: string;
+  sponsor: string;
+  contract_number: string;
+  scope_summary: string;
+  component_code: string;
+  blueprint_ref: string;
+  prompt_code: string;
+  prompt_version: string;
+  stage: string;
+  scope: string;
+  command: string;
+  stdout: string;
+  stderr: string;
+  file_path: string;
+  path: string;
+  diff: string;
+  test_name: string;
+  evidence: string;
+  preview_url: string;
+  last_event_id: string;
+  model_call_id: string;
+  step_execution_id: string;
+  prompt_version_id: string;
+  input_hash: string;
+  output_hash: string;
+  generation_mode: string;
+  model: string;
+  model_role: string;
+
+  created_at: string;
+  updated_at: string;
+  started_at: string;
+  finished_at: string;
+  resolved_at: string;
+  due_date: string;
+  target_end_date: string;
+  valid_from: string;
+  valid_until: string;
+
+  progress: number;
+  score: number;
+  value: number;
+  weight: number;
+  weighted_score: number;
+  rating: number;
+  tenant_sequence: number;
+  passed_count: number;
+  failed_count: number;
+  total_items: number;
+  completed_items: number;
+  failed_items: number;
+  average_hrs: number;
+  homologation_readiness_score: number;
+  cost_estimate: number;
+  duration_seconds: number;
+  confidence: number;
+  estimated_cost_usd: number;
+  ai_budget_usd: number;
+  ai_cost_usd: number;
+  validation_score: number;
+  value_potential: number;
+  points: number;
+  earned_points: number;
+  hrs: number;
+  timed_out: boolean;
+  allowed: boolean;
+  within_budget: boolean;
+
+  project: Dict;
+  run: Dict;
+  definition: Dict;
+  entitlement: Dict;
+  prospect: Dict;
+  opportunity: Dict;
+  mvp_run: Dict;
+  mvp_spec: Dict;
+  briefing: Dict;
+  proposal: Dict;
+  commercial_proposal: Dict;
+  latest_report: Dict;
+  latest_package: Dict;
+  latest_approval: Dict;
+
+  explanation_json: { components: Record<string, { value: number; weight: number }> };
+  output_json: { recommendations: string[]; facts: string[]; risks: string[] };
+  structured_json: Record<string, string[]>;
+  input_json: Record<string, unknown>;
+  metadata_json: Record<string, unknown>;
+  manifest_json: Record<string, unknown>;
+  package_json: Record<string, unknown>;
+  scope_json: Record<string, unknown>;
+  limits_json: Record<string, unknown>;
+  limits_consumed_json: Record<string, unknown>;
+  evidence_json: Record<string, unknown>;
+  test_summary_json: { status: string; passed: number; failed: number };
+
+  programs: Dict[];
+  projects: Dict[];
+  contracts: Dict[];
+  components: Dict[];
+  approvals: Dict[];
+  scores: Dict[];
+  activity: Dict[];
+  activities: Dict[];
+  ai_activities: Dict[];
+  events: Dict[];
+  artifacts: Dict[];
+  artifact_records: Dict[];
+  quality_gates: Dict[];
+  quality_gates_json: Dict[];
+  requirements: Dict[];
+  acceptance_criteria: Dict[];
+  reports: Dict[];
+  packages: Dict[];
+  milestones_json: Dict[];
+  tasks_json: Dict[];
+
+  capabilities_json: string[];
+  blockers_json: string[];
+  warnings_json: string[];
+  risks_json: string[];
+  inputs_json: string[];
+  outputs_json: string[];
+  tools_json: string[];
+  source_refs_json: string[];
+  recommendations: string[];
+  facts: string[];
+  risks: string[];
+}
 
 export type RunBundle = {
   run: Dict | null;
+  topology: Dict | null;
   nodes: Dict[];
   events: Dict[];
   artifacts: Dict[];
@@ -17,4 +210,85 @@ export type RunBundle = {
   agentStates: Dict[];
   agentMessages: Dict[];
   workItems: Dict[];
+  ai: AIWorkspaceSummary;
+  stepExecutions: AgentStepSummary[];
+  executionUnits: ExecutionUnitSummary[];
+  artifactFragments: Dict[];
+  validation: ValidationManifest;
+};
+
+export type AIWorkspaceSummary = {
+  generation_mode?: string | null;
+  budget_usd?: number | null;
+  cost_usd?: number | null;
+  within_budget?: boolean | null;
+  model_calls?: number | null;
+  executor_protocol_version?: string | null;
+  trace_id?: string | null;
+  last_heartbeat_at?: string | null;
+};
+
+export type ExecutionUnitSummary = {
+  id: string;
+  node_id: string;
+  unit_key: string;
+  unit_type: string;
+  strategy: string;
+  status: string;
+  iteration: number;
+  order_index: number;
+  attempt_count: number;
+  continuation_count: number;
+  model_call_id?: string | null;
+  output_hash?: string | null;
+  finish_reason?: string | null;
+  last_heartbeat_at?: string | null;
+  targets_json?: string[];
+  dependencies_json?: string[];
+};
+
+export type AgentStepSummary = {
+  id: string;
+  node_id: string;
+  phase: string;
+  iteration: number;
+  attempt: number;
+  status: string;
+  decision: string;
+  model_call_id?: string | null;
+  prompt_version_id?: string | null;
+  input_hash: string;
+  output_hash: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+};
+
+export type ValidationManifest = {
+  generation_mode?: string | null;
+  executor_protocol_version?: string | null;
+  trace_id?: string | null;
+  generation_fingerprint?: string | null;
+  budget?: { limit_usd?: number | null; actual_usd?: number | null; within_budget?: boolean | null };
+  ai_nodes?: string[];
+  steps?: AgentStepSummary[];
+  model_calls?: Array<{
+    id: string;
+    agent_name: string;
+    model: string;
+    model_role: string;
+    status: string;
+    prompt_tokens: number;
+    completion_tokens: number;
+    cost_usd: number;
+    input_hash: string;
+    output_hash: string;
+    execution_unit_id?: string | null;
+    finish_reason?: string | null;
+    provider_route?: string | null;
+    cache_eligible_tokens?: number;
+    cache_write_tokens?: number;
+    cache_read_tokens?: number;
+    cache_savings_usd?: number;
+  }>;
+  invariants?: Record<string, boolean>;
 };

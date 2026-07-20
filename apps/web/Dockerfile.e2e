@@ -7,4 +7,4 @@ RUN npm ci
 
 COPY . .
 
-CMD ["npm", "run", "test:e2e"]
+CMD ["sh", "-c", "node tests/e2e/container-loopback-proxy.mjs & npm run test:e2e"]

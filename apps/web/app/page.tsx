@@ -1,5 +1,5 @@
-import { EnterpriseBuilderHome } from "@/components/builder/EnterpriseBuilderHome";
+import { redirect } from "next/navigation";
 
 export default function HomePage() {
-  return <EnterpriseBuilderHome />;
+  redirect("/dashboard");
 }

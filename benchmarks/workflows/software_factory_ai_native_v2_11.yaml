@@ -1,0 +1,79 @@
+graph:
+  id: software_factory_ai_native_v2
+  version: 2.11.0
+  description: AI-native software factory with model-produced artifacts, code, evidence-driven loops and deterministic gates.
+  execution:
+    ai_required: true
+    default_budget_usd: 15.0
+    max_total_steps: 32
+    workspace_root: generated_app
+  ui:
+    title: Fábrica AI-Native V2
+    show_technical_nodes: false
+    group_by: phase
+  phases:
+    - { id: demand_classification, label: Classificação da Demanda }
+    - { id: autonomous_acceptance_criteria, label: Critérios de Aceite }
+    - { id: scope_governance, label: Governança de Escopo }
+    - { id: product_planning, label: Planejamento de Produto }
+    - { id: ux_design, label: UX/UI }
+    - { id: architecture, label: Arquitetura }
+    - { id: data_design, label: Dados }
+    - { id: api_contract, label: Contratos de API }
+    - { id: task_planning, label: Planejamento de Tarefas }
+    - { id: implementation, label: Implementação }
+    - { id: code_review, label: Revisão de Código }
+    - { id: testing, label: Testes }
+    - { id: visual_qa, label: QA Visual }
+    - { id: accessibility_qa, label: Acessibilidade }
+    - { id: security_review, label: Segurança }
+    - { id: devops_packaging, label: Empacotamento }
+    - { id: release_management, label: Release }
+    - { id: quality_governance, label: Governança de Qualidade }
+    - { id: human_homologation_approval, label: Aprovação Humana }
+    - { id: final_delivery, label: Entrega Final }
+  nodes:
+    - { id: USER, type: passthrough, phase: demand_classification, ai_required: false }
+    - { id: Demand Classifier, type: agent, phase: demand_classification, skill: demand_classifier, model_role: fast, outputs: [DOMAIN_CLASSIFICATION.md] }
+    - { id: Acceptance Criteria Architect, type: agent, phase: autonomous_acceptance_criteria, skill: acceptance_criteria_architect, model_role: reasoning, outputs: [ACCEPTANCE_CRITERIA.md] }
+    - { id: Scope Governor, type: agent, phase: scope_governance, skill: scope_governor, model_role: reasoning, outputs: [SCOPE.md] }
+    - { id: Product Manager, type: agent, phase: product_planning, skill: product_manager, model_role: reasoning, outputs: [PRD.md] }
+    - { id: UX UI Designer, type: agent, phase: ux_design, skill: ux_ui_designer, model_role: reasoning, outputs: [UX_SPEC.md] }
+    - { id: Architect, type: agent, phase: architecture, skill: architect, model_role: reasoning, outputs: [SYSTEM_DESIGN.md] }
+    - { id: Data Architect, type: agent, phase: data_design, skill: data_architect, model_role: reasoning, outputs: [DATA_MODEL.md] }
+    - { id: API Contract Engineer, type: agent, phase: api_contract, skill: api_contract_engineer, model_role: reasoning, outputs: [API_SPEC.md] }
+    - { id: Project Manager, type: agent, phase: task_planning, skill: project_manager, model_role: fast, outputs: [TASK_LIST.md] }
+    - { id: Engineer, type: agent, phase: implementation, skill: engineer, model_role: code, outputs: [IMPLEMENTATION_SUMMARY.md], allowed_tools: [write_workspace] }
+    - { id: Code Reviewer, type: agent, phase: code_review, skill: code_reviewer, model_role: code, outputs: [REVIEW_REPORT.md], allowed_tools: [read_workspace] }
+    - { id: QA Engineer, type: agent, phase: testing, skill: qa_engineer, model_role: code, outputs: [TEST_PLAN.md, TEST_REPORT.md], allowed_tools: [read_workspace, backend_tests, frontend_tests, frontend_build] }
+    - { id: Visual QA Agent, type: agent, phase: visual_qa, skill: visual_qa_agent, model_role: reasoning, outputs: [VISUAL_QA_REPORT.md], allowed_tools: [visual_tests] }
+    - { id: Accessibility QA Agent, type: agent, phase: accessibility_qa, skill: accessibility_qa_agent, model_role: reasoning, outputs: [ACCESSIBILITY_REPORT.md], allowed_tools: [accessibility_tests] }
+    - { id: Security Engineer, type: agent, phase: security_review, skill: security_engineer, model_role: reasoning, outputs: [SECURITY_REVIEW.md], allowed_tools: [security_scan] }
+    - { id: DevOps Engineer, type: agent, phase: devops_packaging, skill: devops_engineer, model_role: reasoning, outputs: [DEPLOYMENT.md] }
+    - { id: Release Manager, type: agent, phase: release_management, skill: release_manager, model_role: fast, outputs: [RELEASE_NOTES.md] }
+    - { id: Quality Governor, type: agent, phase: quality_governance, skill: quality_governor, model_role: reasoning, outputs: [HOMOLOGATION_REPORT.md] }
+    - { id: Human Approval, type: human_approval, phase: human_homologation_approval, skill: human_supervisor, ai_required: false }
+    - { id: FINAL, type: passthrough, phase: final_delivery, ai_required: false }
+  edges:
+    - { from: USER, to: Demand Classifier, condition: true }
+    - { from: Demand Classifier, to: Acceptance Criteria Architect, condition: success }
+    - { from: Acceptance Criteria Architect, to: Scope Governor, condition: success }
+    - { from: Scope Governor, to: Product Manager, condition: success }
+    - { from: Product Manager, to: UX UI Designer, condition: success }
+    - { from: UX UI Designer, to: Architect, condition: success }
+    - { from: Architect, to: Data Architect, condition: success }
+    - { from: Data Architect, to: API Contract Engineer, condition: success }
+    - { from: API Contract Engineer, to: Project Manager, condition: success }
+    - { from: Project Manager, to: Engineer, condition: success }
+    - { from: Engineer, to: Code Reviewer, condition: success }
+    - { from: Code Reviewer, to: Engineer, condition: needs_changes, max_iterations: 2 }
+    - { from: Code Reviewer, to: QA Engineer, condition: approved }
+    - { from: QA Engineer, to: Engineer, condition: tests_failed, max_iterations: 2 }
+    - { from: QA Engineer, to: Visual QA Agent, condition: tests_passed }
+    - { from: Visual QA Agent, to: Accessibility QA Agent, condition: passed }
+    - { from: Accessibility QA Agent, to: Security Engineer, condition: passed }
+    - { from: Security Engineer, to: DevOps Engineer, condition: passed }
+    - { from: DevOps Engineer, to: Release Manager, condition: success }
+    - { from: Release Manager, to: Quality Governor, condition: success }
+    - { from: Quality Governor, to: Human Approval, condition: approved_for_homologation }
+    - { from: Human Approval, to: FINAL, condition: approved }

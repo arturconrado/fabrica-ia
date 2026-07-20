@@ -1,0 +1,120 @@
+version: 2.13.0
+method: frozen-p95-valid-plus-20-percent
+nodes:
+  Demand Classifier:
+    reserved_budget_usd: 6.0
+    max_output_tokens: 1200
+    output_budget_policy: { floor_tokens: 1200 }
+    context_policy:
+      input_budget_tokens: 8000
+      max_selected_references: 8
+      min_rag_relevance_score: 0.18
+      per_kind_token_budgets: { demand: 3500, contract: 1800, rag: 1800, lesson: 500 }
+  Acceptance Criteria Architect:
+    reserved_budget_usd: 5.5
+    context_policy:
+      input_budget_tokens: 14000
+      max_selected_references: 12
+      min_rag_relevance_score: 0.2
+      per_kind_token_budgets: { demand: 3500, contract: 2000, scope: 1500, artifact: 3500, rag: 2500, lesson: 700 }
+      artifact_views: { DOMAIN_CLASSIFICATION.md: { mode: digest, max_tokens: 1400 } }
+  Scope Governor:
+    reserved_budget_usd: 5.0
+    context_policy:
+      input_budget_tokens: 14000
+      max_selected_references: 12
+      per_kind_token_budgets: { demand: 2500, contract: 2000, scope: 2000, artifact: 6000, rag: 1500, lesson: 600 }
+      artifact_views: { DOMAIN_CLASSIFICATION.md: { mode: digest, max_tokens: 900 }, ACCEPTANCE_CRITERIA.md: { mode: full, max_tokens: 5000 } }
+  Product Manager:
+    reserved_budget_usd: 4.5
+    context_policy:
+      input_budget_tokens: 16000
+      max_selected_references: 14
+      per_kind_token_budgets: { demand: 2200, contract: 1800, scope: 2200, artifact: 7500, rag: 1600, decision: 900, lesson: 600 }
+      artifact_views: { DOMAIN_CLASSIFICATION.md: { mode: digest, max_tokens: 700 }, ACCEPTANCE_CRITERIA.md: { mode: full, max_tokens: 4500 }, SCOPE.md: { mode: full, max_tokens: 2600 } }
+  UX UI Designer:
+    reserved_budget_usd: 4.0
+    context_policy:
+      input_budget_tokens: 16000
+      max_selected_references: 12
+      per_kind_token_budgets: { demand: 1800, artifact: 10500, rag: 1800, lesson: 700 }
+      artifact_views: { PRD.md: { mode: sections, headings: [goals, users, requirements, acceptance], max_tokens: 6000 }, ACCEPTANCE_CRITERIA.md: { mode: full, max_tokens: 4000 }, SCOPE.md: { mode: digest, max_tokens: 1000 } }
+  Architect:
+    reserved_budget_usd: 3.5
+    context_policy:
+      input_budget_tokens: 22000
+      max_selected_references: 15
+      per_kind_token_budgets: { demand: 2000, contract: 1800, scope: 1800, artifact: 13000, rag: 1800, decision: 900, lesson: 700 }
+      artifact_views: { PRD.md: { mode: sections, headings: [goals, requirements, constraints, acceptance], max_tokens: 6500 }, ACCEPTANCE_CRITERIA.md: { mode: full, max_tokens: 4500 }, UX_SPEC.md: { mode: sections, headings: [flows, accessibility, states, responsive], max_tokens: 3500 }, SCOPE.md: { mode: digest, max_tokens: 900 } }
+  Data Architect:
+    reserved_budget_usd: 3.0
+    context_policy:
+      input_budget_tokens: 16000
+      max_selected_references: 11
+      per_kind_token_budgets: { demand: 1200, artifact: 12500, rag: 1300, lesson: 600 }
+      artifact_views: { PRD.md: { mode: sections, headings: [entities, requirements, rules], max_tokens: 4500 }, SYSTEM_DESIGN.md: { mode: sections, headings: [data, boundaries, security, interfaces], max_tokens: 6500 }, ACCEPTANCE_CRITERIA.md: { mode: digest, max_tokens: 1300 } }
+  API Contract Engineer:
+    reserved_budget_usd: 3.0
+    context_policy:
+      input_budget_tokens: 20000
+      max_selected_references: 12
+      per_kind_token_budgets: { demand: 1200, artifact: 16500, rag: 1200, lesson: 600 }
+      artifact_views: { ACCEPTANCE_CRITERIA.md: { mode: full, max_tokens: 4500 }, SYSTEM_DESIGN.md: { mode: sections, headings: [interfaces, boundaries, security, errors], max_tokens: 6000 }, DATA_MODEL.md: { mode: full, max_tokens: 5500 }, PRD.md: { mode: digest, max_tokens: 1000 } }
+  Project Manager:
+    reserved_budget_usd: 2.5
+    max_output_tokens: 1600
+    output_budget_policy: { floor_tokens: 1600 }
+    context_policy:
+      input_budget_tokens: 14000
+      max_selected_references: 12
+      per_kind_token_budgets: { demand: 1000, scope: 1500, artifact: 10500, decision: 500, lesson: 500 }
+      artifact_views: { PRD.md: { mode: digest, max_tokens: 2600 }, SYSTEM_DESIGN.md: { mode: digest, max_tokens: 2600 }, API_SPEC.md: { mode: digest, max_tokens: 2600 }, DATA_MODEL.md: { mode: digest, max_tokens: 1200 }, UX_SPEC.md: { mode: digest, max_tokens: 1200 } }
+  Engineer:
+    reserved_budget_usd: 2.0
+    context_policy:
+      input_budget_tokens: 40000
+      max_selected_references: 20
+      per_kind_token_budgets: { demand: 1200, scope: 1600, artifact: 22000, diff: 9000, test: 3000, rag: 1000, decision: 700, lesson: 900 }
+      artifact_views: { PRD.md: { mode: sections, headings: [requirements, rules, acceptance], max_tokens: 4500 }, ACCEPTANCE_CRITERIA.md: { mode: full, max_tokens: 5000 }, UX_SPEC.md: { mode: sections, headings: [flows, states, responsive, accessibility], max_tokens: 3500 }, SYSTEM_DESIGN.md: { mode: full, max_tokens: 5500 }, DATA_MODEL.md: { mode: full, max_tokens: 3500 }, API_SPEC.md: { mode: full, max_tokens: 5000 }, TASK_LIST.md: { mode: full, max_tokens: 2200 } }
+  Code Reviewer:
+    reserved_budget_usd: 1.75
+    context_policy:
+      input_budget_tokens: 28000
+      max_selected_references: 18
+      per_kind_token_budgets: { artifact: 12500, diff: 13500, decision: 700, lesson: 800 }
+      artifact_views: { ACCEPTANCE_CRITERIA.md: { mode: full, max_tokens: 4500 }, SYSTEM_DESIGN.md: { mode: digest, max_tokens: 2600 }, API_SPEC.md: { mode: digest, max_tokens: 2600 }, IMPLEMENTATION_SUMMARY.md: { mode: full, max_tokens: 2200 } }
+  QA Engineer:
+    reserved_budget_usd: 1.5
+    context_policy:
+      input_budget_tokens: 24000
+      max_selected_references: 18
+      per_kind_token_budgets: { artifact: 10500, file: 8500, test: 3500, decision: 500, lesson: 700 }
+      artifact_views: { ACCEPTANCE_CRITERIA.md: { mode: full, max_tokens: 4500 }, API_SPEC.md: { mode: digest, max_tokens: 2500 }, REVIEW_REPORT.md: { mode: full, max_tokens: 2500 }, PRD.md: { mode: digest, max_tokens: 900 } }
+  Visual QA Agent:
+    reserved_budget_usd: 1.2
+    max_output_tokens: 3000
+    observation_max_output_tokens: 2400
+    context_policy: { input_budget_tokens: 12000, max_selected_references: 10, per_kind_token_budgets: { artifact: 4500, file: 5200, test: 1500, lesson: 500 } }
+  Accessibility QA Agent:
+    reserved_budget_usd: 1.0
+    max_output_tokens: 3000
+    observation_max_output_tokens: 2400
+    context_policy: { input_budget_tokens: 12000, max_selected_references: 10, per_kind_token_budgets: { artifact: 5000, file: 4500, test: 1500, lesson: 500 } }
+  Security Engineer:
+    reserved_budget_usd: 0.8
+    max_output_tokens: 4500
+    observation_max_output_tokens: 3800
+    context_policy: { input_budget_tokens: 18000, max_selected_references: 14, per_kind_token_budgets: { artifact: 6500, file: 7500, test: 2200, decision: 500, lesson: 700 } }
+  DevOps Engineer:
+    reserved_budget_usd: 0.5
+    max_output_tokens: 3500
+    context_policy: { input_budget_tokens: 12000, max_selected_references: 10, per_kind_token_budgets: { artifact: 6500, file_tree: 2200, test: 2200, lesson: 500 } }
+  Release Manager:
+    reserved_budget_usd: 0.25
+    max_output_tokens: 1600
+    output_budget_policy: { floor_tokens: 1600 }
+    context_policy: { input_budget_tokens: 10000, max_selected_references: 10, per_kind_token_budgets: { artifact: 6500, test: 2200, decision: 500, lesson: 400 } }
+  Quality Governor:
+    reserved_budget_usd: 0.0
+    max_output_tokens: 4500
+    context_policy: { input_budget_tokens: 16000, max_selected_references: 14, per_kind_token_budgets: { artifact: 10500, test: 3500, decision: 600, lesson: 600 } }

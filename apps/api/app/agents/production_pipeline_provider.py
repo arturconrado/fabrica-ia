@@ -9,12 +9,12 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.paths import run_delivery, run_workspace
 from app.core.security import safe_join
 from app.core.status import (
     APPROVED,
     APPROVED_FOR_HOMOLOGATION,
-    APPROVED_WITH_RISKS,
     FAILED,
     NEEDS_CHANGES,
     PENDING,
@@ -28,18 +28,17 @@ from app.models import (
     AcceptanceCriterion,
     AgentMessage,
     AgentRunState,
+    AgentStepExecution,
     AgentEvent,
     AgentWorkItem,
     ApprovalRequest,
     Artifact,
-    Batch,
-    BatchItem,
-    BatchMetric,
     DecisionRecord,
     FileChange,
     HomologationPackage,
     HomologationReport,
     HumanFeedback,
+    LearningSignal,
     LearningLesson,
     Project,
     QualityGate,
@@ -49,18 +48,18 @@ from app.models import (
     RewardSignal,
     RiskItem,
     TestReport,
-    WorkflowCandidate,
     WorkflowDefinition,
     WorkflowNodeState,
     WorkflowRun,
     utcnow,
 )
-from app.agents.production_contracts import DEMO_DEMAND
-from app.optimizer.aflow_adapter import AFlowOptimizerAdapter
-from app.quality.homologation_score import calculate_homologation_score, status_for_score
+from app.providers.object_storage import object_storage
 from app.quality.quality_gate_engine import QUALITY_GATES
 from app.tools.diff_tools import unified_diff
 from app.tools.test_runner import run_generated_tests
+from app.service_delivery.capacity import acquire_workflow_slot, heartbeat_workflow_slot, release_workflow_slot
+from app.service_delivery.service import DomainError
+from app.workflow.cost_policy_compiler import compile_cost_policy_workflow, load_frozen_v211_workflow
 
 
 REQUIREMENTS = [
@@ -121,7 +120,6 @@ AGENT_ROLES = {
     "DevOps Engineer": ("DevOps Engineer", "Empacotar deploy e evidências.", ["package"]),
     "Release Manager": ("Release Manager", "Preparar release notes e readiness.", ["release_gate"]),
     "Quality Governor": ("Quality Governor", "Calcular HRS, quality gates e homologação.", ["quality_gate", "hrs"]),
-    "Workflow Optimizer": ("Workflow Optimizer", "Sugerir melhorias futuras do workflow.", ["optimization_candidate"]),
     "Human Approval": ("Human Supervisor", "Tomar decisão humana de homologação.", ["approve", "reject", "request_changes"]),
 }
 
@@ -149,9 +147,17 @@ HANDOFFS = {
 
 class ProductionPipelineProvider:
     def ensure_workflows(self, db: Session, tenant_id: str = "local-dev") -> None:
-        if db.query(WorkflowDefinition).filter_by(workflow_id="software_factory_homologation_v1", tenant_id=tenant_id).first():
-            return
         workflows = [
+            WorkflowDefinition(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
+                workflow_id="software_factory_ai_native_v2",
+                version="2.11.0",
+                name="Software Factory AI-Native V2.11 (Frozen Baseline)",
+                description="Immutable reproducible baseline for cost-policy evaluation.",
+                yaml_path="benchmarks/workflows/software_factory_ai_native_v2_11.yaml",
+                yaml_content=load_frozen_v211_workflow(),
+            ),
             WorkflowDefinition(
                 id=str(uuid.uuid4()),
                 tenant_id=tenant_id,
@@ -176,8 +182,39 @@ class ProductionPipelineProvider:
                 if Path("workflows/batch_software_factory_v1.yaml").exists()
                 else "",
             ),
+            WorkflowDefinition(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
+                workflow_id="software_factory_ai_native_v2",
+                version="2.12.0",
+                name="Software Factory AI-Native V2",
+                description="Model-produced artifacts and code with deterministic evidence gates.",
+                yaml_path="workflows/software_factory_ai_native_v2.yaml",
+                yaml_content=Path("workflows/software_factory_ai_native_v2.yaml").read_text()
+                if Path("workflows/software_factory_ai_native_v2.yaml").exists()
+                else "",
+            ),
+            WorkflowDefinition(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
+                workflow_id="software_factory_ai_native_v2",
+                version="2.13.0",
+                name="Software Factory AI-Native V2.13",
+                description="Cost-governed candidate with role contracts and bounded section-level context.",
+                yaml_path="workflows/software_factory_ai_native_v2_13_policy.yaml",
+                yaml_content=compile_cost_policy_workflow()
+                if Path("workflows/software_factory_ai_native_v2_13_policy.yaml").exists()
+                else "",
+            ),
         ]
-        db.add_all(workflows)
+        for workflow in workflows:
+            existing = db.query(WorkflowDefinition).filter_by(
+                workflow_id=workflow.workflow_id,
+                version=workflow.version,
+                tenant_id=tenant_id,
+            ).first()
+            if not existing:
+                db.add(workflow)
         db.commit()
 
     def create_project(self, db: Session, name: str, description: str = "", tenant_id: str = "local-dev") -> Project:
@@ -190,15 +227,17 @@ class ProductionPipelineProvider:
     def start_enterprise_run(
         self,
         db: Session,
-        demand: str = DEMO_DEMAND,
+        demand: str,
         project_id: Optional[str] = None,
-        project_name: str = "ContractFlow Enterprise",
+        project_name: Optional[str] = None,
         tenant_id: str = "local-dev",
         run_id: Optional[str] = None,
     ) -> WorkflowRun:
         self.ensure_workflows(db, tenant_id=tenant_id)
         project = db.query(Project).filter_by(id=project_id, tenant_id=tenant_id).first() if project_id else None
         if not project:
+            if not project_name:
+                raise ValueError("An existing project_id or a real project_name is required")
             project = self.create_project(db, project_name, "Execução enterprise da fábrica industrial de software.", tenant_id=tenant_id)
         run = db.get(WorkflowRun, run_id) if run_id else None
         if run:
@@ -208,7 +247,7 @@ class ProductionPipelineProvider:
             run.status = RUNNING
             run.current_phase = "demand_classification"
             run.current_node = "Demand Classifier"
-            run.provider = "production-litellm"
+            run.provider = "homologation-mock" if get_settings().agent_provider.lower() == "mock" else "litellm"
             run.updated_at = utcnow()
         else:
             run = WorkflowRun(
@@ -221,11 +260,12 @@ class ProductionPipelineProvider:
                 current_phase="demand_classification",
                 current_node="Demand Classifier",
                 cost_estimate=0.0,
-                provider="production-litellm",
+                provider="homologation-mock" if get_settings().agent_provider.lower() == "mock" else "litellm",
             )
             db.add(run)
         db.flush()
-        emit_event(db, run.id, "run.created", "Run criado para ContractFlow Enterprise.")
+        acquire_workflow_slot(db, run.id)
+        emit_event(db, run.id, "run.created", f"Run criado para {project.name}.")
         emit_event(db, run.id, "run.started", "Linha industrial iniciada.")
         self._record_decision(
             db,
@@ -246,16 +286,16 @@ class ProductionPipelineProvider:
         self._qa_final_success(db, run)
         self._post_test_agents(db, run)
         self._quality_and_homologation(db, run)
-        self._optimizer_candidate(db, run)
         run.status = WAITING_FOR_HUMAN
         run.current_phase = "human_homologation_approval"
         run.current_node = "Human Approval"
         approval = ApprovalRequest(
             id=str(uuid.uuid4()),
+            tenant_id=run.tenant_id,
             run_id=run.id,
             node_id="Human Approval",
             title="Aprovação final de homologação",
-            description="HRS >= 90, sem hard blockers, pacote criado e testes finais passando.",
+            description="Evidências determinísticas e pacote concluídos; decisão humana final pendente.",
             status=PENDING,
             requested_action="approve_for_homologation",
             risk_level="low",
@@ -273,6 +313,7 @@ class ProductionPipelineProvider:
             payload={"approval_request_id": approval.id},
         )
         run.updated_at = utcnow()
+        release_workflow_slot(db, run.id)
         db.commit()
         db.refresh(run)
         return run
@@ -280,14 +321,16 @@ class ProductionPipelineProvider:
     def start_interactive_enterprise_run(
         self,
         db: Session,
-        demand: str = DEMO_DEMAND,
+        demand: str,
         project_id: Optional[str] = None,
-        project_name: str = "ContractFlow Enterprise",
+        project_name: Optional[str] = None,
         tenant_id: str = "local-dev",
     ) -> WorkflowRun:
         self.ensure_workflows(db, tenant_id=tenant_id)
         project = db.query(Project).filter_by(id=project_id, tenant_id=tenant_id).first() if project_id else None
         if not project:
+            if not project_name:
+                raise ValueError("An existing project_id or a real project_name is required")
             project = self.create_project(db, project_name, "Execução interativa enterprise da fábrica industrial de software.", tenant_id=tenant_id)
         run = WorkflowRun(
             id=str(uuid.uuid4()),
@@ -299,10 +342,11 @@ class ProductionPipelineProvider:
             current_phase="demand_classification",
             current_node="Demand Classifier",
             cost_estimate=0.0,
-            provider="production-litellm-interactive",
+            provider="homologation-mock-interactive" if get_settings().agent_provider.lower() == "mock" else "litellm-interactive",
         )
         db.add(run)
         db.flush()
+        acquire_workflow_slot(db, run.id)
         self._seed_agent_operations(db, run)
         emit_event(db, run.id, "run.created", f"Run interativo criado para {project.name}.", payload={"mode": "interactive"})
         emit_event(db, run.id, "run.started", "Factory Floor iniciou execução multiagente observável.", payload={"mode": "interactive"})
@@ -310,9 +354,61 @@ class ProductionPipelineProvider:
         db.commit()
         db.refresh(run)
 
-        thread = threading.Thread(target=self._run_interactive_background, args=(run.id,), daemon=True)
+        thread = threading.Thread(target=self._run_interactive_background, args=(run.id, tenant_id), daemon=True)
         thread.start()
         return run
+
+    def execute_temporal_enterprise_run(
+        self,
+        db: Session,
+        *,
+        demand: str,
+        project_id: Optional[str],
+        tenant_id: str,
+        run_id: str,
+        temporal_workflow_id: str,
+    ) -> WorkflowRun:
+        """Execute the durable production run while keeping operator controls cooperative."""
+        self.ensure_workflows(db, tenant_id=tenant_id)
+        run = db.query(WorkflowRun).filter_by(id=run_id, tenant_id=tenant_id).first()
+        if not run:
+            raise RuntimeError(f"Scheduled workflow run is not committed yet: {run_id}")
+        completed_package = db.query(HomologationPackage).filter_by(run_id=run.id, tenant_id=tenant_id).first()
+        if run.status in {WAITING_FOR_HUMAN, APPROVED_FOR_HOMOLOGATION} and completed_package:
+            return run
+        if run.status in {"cancel_requested", "cancelled"}:
+            self._finalize_cancellation(db, run)
+            return run
+        project = db.query(Project).filter_by(id=project_id, tenant_id=tenant_id).first() if project_id else None
+        if not project:
+            raise RuntimeError(f"Scheduled workflow project is not available for tenant {tenant_id}")
+
+        run.demand = demand
+        run.project_id = project.id
+        run.workflow_id = "software_factory_homologation_v1"
+        run.temporal_workflow_id = temporal_workflow_id
+        run.provider = "litellm" if get_settings().agent_provider.lower() == "litellm" else "homologation-mock"
+        if run.status != PENDING:
+            run.status = RUNNING
+        run.current_phase = "demand_classification"
+        run.current_node = "Demand Classifier"
+        run.updated_at = utcnow()
+        acquire_workflow_slot(db, run.id)
+        self._seed_agent_operations(db, run)
+        if not db.query(AgentEvent).filter_by(run_id=run.id, tenant_id=tenant_id, event_type="run.created").first():
+            emit_event(db, run.id, "run.created", f"Run Temporal criado para {project.name}.", payload={"mode": "temporal"})
+            emit_event(db, run.id, "run.started", "Temporal iniciou a linha multiagente controlável.", payload={"mode": "temporal"})
+            self._message(db, run, "USER", "Demand Classifier", "demand", demand, sop_step="intake")
+        db.commit()
+
+        self._run_interactive_background(run.id, tenant_id)
+        db.expire_all()
+        refreshed = db.query(WorkflowRun).filter_by(id=run.id, tenant_id=tenant_id).first()
+        if not refreshed:
+            raise RuntimeError(f"Workflow run disappeared after Temporal execution: {run.id}")
+        if refreshed.status == FAILED:
+            raise DomainError(500, "TEMPORAL_PIPELINE_FAILED", "Temporal production pipeline failed")
+        return refreshed
 
     def step_run(self, db: Session, run_id: str) -> WorkflowRun:
         run = db.get(WorkflowRun, run_id)
@@ -328,22 +424,28 @@ class ProductionPipelineProvider:
         db.refresh(run)
         return run
 
-    def _run_interactive_background(self, run_id: str) -> None:
-        from app.db.session import SessionLocal
+    def _run_interactive_background(self, run_id: str, tenant_id: str) -> None:
+        from app.db.session import SessionLocal, set_tenant_context
 
         db = SessionLocal()
         try:
+            set_tenant_context(db, tenant_id)
             run = db.get(WorkflowRun, run_id)
             if not run:
                 return
-            self._record_decision(
-                db,
-                run.id,
-                "USER",
-                "Interactive MetaGPT-style operation",
-                "Executar agentes como papéis observáveis com SOP, mensagens e handoffs.",
-                "A operação deve ser visível para o humano enquanto os artefatos são produzidos.",
-            )
+            if not db.query(DecisionRecord).filter_by(
+                run_id=run.id,
+                tenant_id=tenant_id,
+                title="Interactive MetaGPT-style operation",
+            ).first():
+                self._record_decision(
+                    db,
+                    run.id,
+                    "USER",
+                    "Interactive MetaGPT-style operation",
+                    "Executar agentes como papéis observáveis com SOP, mensagens e handoffs.",
+                    "A operação deve ser visível para o humano enquanto os artefatos são produzidos.",
+                )
             db.commit()
             steps = []
             for node_id, phase in AGENT_SEQUENCE:
@@ -364,7 +466,6 @@ class ProductionPipelineProvider:
             steps.extend(
                 [
                     ("Quality Governor", "quality_governance", "SOP: calcular HRS e gates", self._quality_and_homologation),
-                    ("Workflow Optimizer", "learning", "SOP: propor melhoria de workflow", self._optimizer_candidate),
                     ("Human Approval", "human_homologation_approval", "SOP: aguardar decisão humana", self._request_human_approval),
                 ]
             )
@@ -372,8 +473,20 @@ class ProductionPipelineProvider:
             previous_agent = "USER"
             total = len(steps)
             for index, (agent_name, phase, sop_step, action) in enumerate(steps, start=1):
+                checkpoint = (
+                    db.query(AgentWorkItem)
+                    .filter_by(run_id=run_id, tenant_id=tenant_id, agent_name=agent_name, sop_step=sop_step)
+                    .filter(AgentWorkItem.status.in_([SUCCESS, WAITING_FOR_HUMAN]))
+                    .first()
+                )
+                if checkpoint:
+                    previous_agent = agent_name
+                    continue
                 run = db.get(WorkflowRun, run_id)
-                if not run or run.status == "cancelled":
+                if not run:
+                    return
+                if run.status in {"cancel_requested", "cancelled"}:
+                    self._finalize_cancellation(db, run)
                     return
                 step_mode = self._wait_until_runnable(db, run)
                 if step_mode == "cancelled":
@@ -384,6 +497,10 @@ class ProductionPipelineProvider:
                 action(db, run)
                 self._complete_operational_step(db, run, agent_name, phase, sop_step, index, total)
                 db.commit()
+                db.refresh(run)
+                if run.status in {"cancel_requested", "cancelled"}:
+                    self._finalize_cancellation(db, run)
+                    return
                 control = self._control_state(db, run)
                 db.refresh(control)
                 if step_mode == "step_once" and control.status == "step_once" and agent_name != "Human Approval":
@@ -394,77 +511,151 @@ class ProductionPipelineProvider:
                 previous_agent = agent_name
                 self._sleep_between_steps()
         except Exception as exc:
+            db.rollback()
             run = db.get(WorkflowRun, run_id)
             if run:
                 run.status = FAILED
+                release_workflow_slot(db, run.id)
                 emit_event(db, run.id, "run.failed", f"Runner interativo falhou: {exc}", status=FAILED, severity="error")
                 db.commit()
         finally:
+            try:
+                run = db.get(WorkflowRun, run_id)
+                if run:
+                    control = db.query(AgentRunState).filter_by(
+                        run_id=run.id, tenant_id=tenant_id, agent_name="RUN_CONTROL"
+                    ).first()
+                    if control and "temporal_activity_active" in (control.outputs_json or []):
+                        control.outputs_json = [
+                            item for item in (control.outputs_json or []) if item != "temporal_activity_active"
+                        ]
+                        db.commit()
+            except Exception:
+                db.rollback()
             db.close()
 
-    def approve_run(self, db: Session, run_id: str, comment: str = "") -> WorkflowRun:
+    def approve_run(self, db: Session, run_id: str, comment: str = "", *, commit: bool = True) -> WorkflowRun:
         run = db.get(WorkflowRun, run_id)
         if not run:
-            raise ValueError("Run not found")
+            raise DomainError(404, "RUN_NOT_FOUND", "Run not found")
+        if not comment.strip():
+            raise DomainError(400, "APPROVAL_COMMENT_REQUIRED", "Human approval comment is required")
+        if run.status != WAITING_FOR_HUMAN:
+            raise DomainError(409, "RUN_NOT_AWAITING_APPROVAL", "Run is not awaiting final human approval")
         approval = (
             db.query(ApprovalRequest)
-            .filter(ApprovalRequest.run_id == run_id)
+            .filter(ApprovalRequest.run_id == run_id, ApprovalRequest.tenant_id == run.tenant_id)
             .order_by(ApprovalRequest.created_at.desc())
             .first()
         )
-        if approval:
-            approval.status = APPROVED
-            approval.human_comment = comment
-            approval.resolved_at = utcnow()
-        gate = db.query(QualityGate).filter_by(run_id=run_id, gate_id="human_approval").first()
-        if gate:
-            gate.status = "passed"
-            gate.score = 100
-            gate.evidence_json = {"approval": "human approved", "comment": comment}
+        if not approval or approval.status != PENDING:
+            raise DomainError(409, "APPROVAL_NOT_PENDING", "A pending approval request is required")
+        gates = db.query(QualityGate).filter_by(run_id=run_id, tenant_id=run.tenant_id).all()
+        blocked = [gate.gate_id for gate in gates if gate.status == "blocked"]
+        non_manual_pending = [gate.gate_id for gate in gates if gate.status == "pending" and gate.gate_id != "human_approval"]
+        report = db.query(HomologationReport).filter_by(run_id=run.id, tenant_id=run.tenant_id).order_by(HomologationReport.created_at.desc()).first()
+        final_test = db.query(TestReport).filter_by(run_id=run.id, tenant_id=run.tenant_id, status="passed").order_by(TestReport.created_at.desc()).first()
+        package = db.query(HomologationPackage).filter_by(run_id=run.id, tenant_id=run.tenant_id).order_by(HomologationPackage.created_at.desc()).first()
+        if blocked or non_manual_pending or (report and report.blockers_json) or not final_test or not package:
+            raise DomainError(
+                409,
+                "TECHNICAL_BLOCKERS_PRESENT",
+                f"Technical blockers cannot be overridden by human approval: blocked={blocked}, pending={non_manual_pending}",
+            )
+        approval.status = APPROVED
+        approval.human_comment = comment
+        approval.resolved_at = utcnow()
+        for gate in gates:
+            if gate.gate_id == "human_approval" or gate.status == "review_required":
+                gate.status = "passed"
+                gate.score = 100
+                gate.evidence_json = {
+                    "classification": "declared",
+                    "source": "human final review",
+                    "comment": comment,
+                }
+                gate.warnings_json = []
+        run.homologation_readiness_score = round(sum(gate.score for gate in gates) / len(gates), 2) if gates else 0.0
         run.status = APPROVED_FOR_HOMOLOGATION
         run.current_phase = "final_delivery"
         run.current_node = "FINAL"
         run.finished_at = utcnow()
+        release_workflow_slot(db, run.id)
+        if report:
+            report.status = APPROVED_FOR_HOMOLOGATION
+            report.score = run.homologation_readiness_score
+            report.summary = "Technical evidence and explicit human review approved for assisted delivery."
+        if package:
+            package.status = "approved"
+            package.manifest_json = {
+                **(package.manifest_json or {}),
+                "status": APPROVED_FOR_HOMOLOGATION,
+                "hrs": run.homologation_readiness_score,
+                "human_approval": {"classification": "declared", "comment": comment},
+            }
+            for artifact in db.query(Artifact).filter_by(run_id=run.id, tenant_id=run.tenant_id).all():
+                artifact.audience = "client"
         emit_event(db, run_id, "approval.approved", "Humano aprovou a homologação.", node_id="Human Approval", payload={"comment": comment})
+        db.add(
+            LearningSignal(
+                id=str(uuid.uuid4()), tenant_id=run.tenant_id, run_id=run.id,
+                signal_type="human.approval", source_type="approval_request", source_id=approval.id,
+                agent_name="Human Approval", value=1.0,
+                evidence_json={"decision": "approved", "hrs": run.homologation_readiness_score},
+                eligible_for_global=True,
+            )
+        )
         emit_event(db, run_id, "homologation.approved", "Entrega aprovada para homologação.", node_id="Human Approval")
         emit_event(db, run_id, "run.finished", "Run finalizado como approved_for_homologation.", node_id="FINAL", status=APPROVED_FOR_HOMOLOGATION)
-        db.commit()
-        db.refresh(run)
+        if commit:
+            db.commit()
+            db.refresh(run)
         return run
 
-    def reject_run(self, db: Session, run_id: str, comment: str = "") -> WorkflowRun:
+    def reject_run(self, db: Session, run_id: str, comment: str = "", *, commit: bool = True) -> WorkflowRun:
         run = db.get(WorkflowRun, run_id)
         if not run:
-            raise ValueError("Run not found")
+            raise DomainError(404, "RUN_NOT_FOUND", "Run not found")
+        if not comment.strip():
+            raise DomainError(400, "REJECTION_COMMENT_REQUIRED", "Human rejection comment is required")
+        if run.status != WAITING_FOR_HUMAN:
+            raise DomainError(409, "RUN_NOT_AWAITING_APPROVAL", "Run is not awaiting final human approval")
+        approval = (
+            db.query(ApprovalRequest)
+            .filter(ApprovalRequest.run_id == run_id, ApprovalRequest.tenant_id == run.tenant_id)
+            .order_by(ApprovalRequest.created_at.desc())
+            .first()
+        )
+        if not approval or approval.status != PENDING:
+            raise DomainError(409, "APPROVAL_NOT_PENDING", "A pending approval request is required")
         run.status = REJECTED
         run.finished_at = utcnow()
-        approval = db.query(ApprovalRequest).filter_by(run_id=run_id).order_by(ApprovalRequest.created_at.desc()).first()
-        if approval:
-            approval.status = REJECTED
-            approval.human_comment = comment
-            approval.resolved_at = utcnow()
+        release_workflow_slot(db, run.id)
+        approval.status = REJECTED
+        approval.human_comment = comment
+        approval.resolved_at = utcnow()
         emit_event(db, run_id, "approval.rejected", "Humano rejeitou a entrega.", payload={"comment": comment})
+        db.add(
+            LearningSignal(
+                id=str(uuid.uuid4()), tenant_id=run.tenant_id, run_id=run.id,
+                signal_type="human.approval", source_type="approval_request", source_id=approval.id,
+                agent_name="Human Approval", value=-1.0,
+                evidence_json={"decision": "rejected", "comment_present": True},
+                eligible_for_global=True,
+            )
+        )
         emit_event(db, run_id, "homologation.rejected", "Homologação rejeitada.")
-        db.commit()
-        db.refresh(run)
+        if commit:
+            db.commit()
+            db.refresh(run)
         return run
 
-    def request_changes(self, db: Session, run_id: str, comment: str = "") -> WorkflowRun:
-        run = db.get(WorkflowRun, run_id)
-        if not run:
-            raise ValueError("Run not found")
-        run.status = NEEDS_CHANGES
-        run.current_phase = "implementation"
-        run.current_node = "Engineer"
-        approval = db.query(ApprovalRequest).filter_by(run_id=run_id).order_by(ApprovalRequest.created_at.desc()).first()
-        if approval:
-            approval.status = NEEDS_CHANGES
-            approval.human_comment = comment
-            approval.resolved_at = utcnow()
-        emit_event(db, run_id, "approval.changes_requested", "Humano pediu alterações.", payload={"comment": comment})
-        db.commit()
-        db.refresh(run)
-        return run
+    def request_changes(self, db: Session, run_id: str, comment: str = "", *, commit: bool = True) -> WorkflowRun:
+        raise DomainError(
+            409,
+            "REWORK_EXECUTOR_UNAVAILABLE",
+            "Request changes is disabled for ASF runs until a versioned deterministic rework executor is available",
+        )
 
     def create_feedback(
         self,
@@ -479,6 +670,8 @@ class ProductionPipelineProvider:
         labels: Optional[List[str]] = None,
         tenant_id: str = "local-dev",
     ) -> HumanFeedback:
+        from app.learning.reward_service import reward_from_rating
+
         feedback = HumanFeedback(
             id=str(uuid.uuid4()),
             tenant_id=tenant_id,
@@ -493,17 +686,50 @@ class ProductionPipelineProvider:
         )
         db.add(feedback)
         db.flush()
-        reward_value = 1.0 if rating >= 0 else -1.0
+        reward_value = reward_from_rating(rating)
         reward = RewardSignal(
             id=str(uuid.uuid4()),
             tenant_id=tenant_id,
             run_id=run_id,
             feedback_id=feedback.id,
             reward_value=reward_value,
-            reason=comment or ("positive feedback" if reward_value > 0 else "negative feedback"),
+            reason=comment or ("positive feedback" if reward_value > 0 else "negative feedback" if reward_value < 0 else "neutral feedback"),
             applies_to=node_id or artifact_id or event_id or "run",
         )
         db.add(reward)
+        source_artifact = db.query(Artifact).filter_by(
+            id=artifact_id, tenant_id=tenant_id, run_id=run_id
+        ).first() if artifact_id else None
+        source_step = None
+        if source_artifact and source_artifact.step_execution_id:
+            source_step = db.query(AgentStepExecution).filter_by(
+                id=source_artifact.step_execution_id, tenant_id=tenant_id, run_id=run_id
+            ).first()
+        elif node_id:
+            source_step = db.query(AgentStepExecution).filter_by(
+                tenant_id=tenant_id, run_id=run_id, node_id=node_id
+            ).order_by(AgentStepExecution.started_at.desc()).first()
+        db.add(
+            LearningSignal(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
+                run_id=run_id,
+                signal_type="human.feedback",
+                source_type="feedback",
+                source_id=feedback.id,
+                agent_name=node_id or "Learning Curator",
+                prompt_version_id=source_step.prompt_version_id if source_step else None,
+                model_call_id=(source_artifact.model_call_id if source_artifact else None) or (source_step.model_call_id if source_step else None),
+                value=reward_value,
+                evidence_json={
+                    "feedback_id": feedback.id,
+                    "artifact_id": artifact_id,
+                    "event_id": event_id,
+                    "labels": labels or [],
+                },
+                eligible_for_global=bool(comment and reward_value != 0),
+            )
+        )
         emit_event(db, run_id, "human.feedback_created", "Feedback humano registrado.", payload={"feedback_id": feedback.id})
         emit_event(db, run_id, "reward.signal_created", "Reward signal criado.", payload={"reward_id": reward.id, "value": reward_value})
         if comment:
@@ -533,52 +759,16 @@ class ProductionPipelineProvider:
         db.refresh(lesson)
         return lesson
 
-    def create_enterprise_batch(self, db: Session, tenant_id: str = "local-dev") -> Batch:
-        batch = Batch(id=str(uuid.uuid4()), tenant_id=tenant_id, name="Enterprise Portfolio Batch", status=RUNNING, total_items=3)
-        db.add(batch)
-        db.flush()
-        demands = [
-            ("ContractFlow Enterprise", DEMO_DEMAND, APPROVED_FOR_HOMOLOGATION),
-            ("InventoryFlow Enterprise", "Crie um sistema para produtos, estoque e movimentações.", APPROVED_WITH_RISKS),
-            ("HelpdeskFlow Enterprise", "Crie um sistema para tickets, prioridades e status.", SUCCESS),
-        ]
-        emit_event(db, "batch", "batch.created", "Enterprise portfolio batch criado.", payload={"batch_id": batch.id}, tenant_id=tenant_id)
-        hrs_values = []
-        completed = 0
-        for name, demand, item_status in demands:
-            item = BatchItem(id=str(uuid.uuid4()), tenant_id=tenant_id, batch_id=batch.id, demand=demand, status=RUNNING, complexity="medium")
-            db.add(item)
-            db.flush()
-            emit_event(db, "batch", "batch.item_created", f"Item {name} criado.", payload={"batch_id": batch.id, "item_id": item.id}, tenant_id=tenant_id)
-            run = self.start_enterprise_run(db, demand=demand, project_name=name, tenant_id=tenant_id)
-            if item_status == APPROVED_FOR_HOMOLOGATION:
-                self.approve_run(db, run.id, "Aprovação operacional do portfolio batch para validar métrica de lote.")
-            item.project_id = run.project_id
-            item.run_id = run.id
-            item.status = item_status
-            item.current_phase = run.current_phase
-            item.hrs = run.homologation_readiness_score if item_status == APPROVED_FOR_HOMOLOGATION else max(run.homologation_readiness_score - 6, 86)
-            hrs_values.append(item.hrs)
-            completed += 1
-            emit_event(db, "batch", "batch.item_finished", f"Item {name} finalizado.", payload={"batch_id": batch.id, "item_id": item.id, "run_id": run.id}, tenant_id=tenant_id)
-        batch.status = "completed"
-        batch.completed_items = completed
-        batch.failed_items = 0
-        batch.average_hrs = round(sum(hrs_values) / len(hrs_values), 2)
-        metrics = [
-            ("approval_rate", 1 / 3),
-            ("estimated_cost", 3.75),
-            ("average_hrs", batch.average_hrs),
-        ]
-        for metric_name, value in metrics:
-            db.add(BatchMetric(id=str(uuid.uuid4()), batch_id=batch.id, name=metric_name, value=value, metadata_json={}))
-        emit_event(db, "batch", "batch.completed", "Enterprise batch concluído.", payload={"batch_id": batch.id}, tenant_id=tenant_id)
-        db.commit()
-        db.refresh(batch)
-        return batch
-
     def _seed_agent_operations(self, db: Session, run: WorkflowRun) -> None:
+        existing_names = {
+            row[0]
+            for row in db.query(AgentRunState.agent_name)
+            .filter_by(run_id=run.id, tenant_id=run.tenant_id)
+            .all()
+        }
         for agent_name, (role, objective, tools) in AGENT_ROLES.items():
+            if agent_name in existing_names:
+                continue
             db.add(
                 AgentRunState(
                     id=str(uuid.uuid4()),
@@ -595,22 +785,23 @@ class ProductionPipelineProvider:
                     tools_json=tools,
                 )
             )
-        db.add(
-            AgentRunState(
-                id=str(uuid.uuid4()),
-                tenant_id=run.tenant_id,
-                run_id=run.id,
-                agent_name="RUN_CONTROL",
-                role="Orchestration Control",
-                status="running",
-                current_sop_step="continuous",
-                objective="Controlar pause/resume/step do runner interativo.",
-                progress=0,
-                inputs_json=[],
-                outputs_json=[],
-                tools_json=["pause", "resume", "step"],
+        if "RUN_CONTROL" not in existing_names:
+            db.add(
+                AgentRunState(
+                    id=str(uuid.uuid4()),
+                    tenant_id=run.tenant_id,
+                    run_id=run.id,
+                    agent_name="RUN_CONTROL",
+                    role="Orchestration Control",
+                    status="running",
+                    current_sop_step="continuous",
+                    objective="Controlar pause/resume/step do runner interativo.",
+                    progress=0,
+                    inputs_json=[],
+                    outputs_json=[],
+                    tools_json=["pause", "resume", "step", "cancel"],
+                )
             )
-        )
 
     def _control_state(self, db: Session, run: WorkflowRun) -> AgentRunState:
         control = db.query(AgentRunState).filter_by(run_id=run.id, agent_name="RUN_CONTROL").first()
@@ -651,16 +842,47 @@ class ProductionPipelineProvider:
         return state
 
     def _wait_until_runnable(self, db: Session, run: WorkflowRun) -> str:
+        last_capacity_heartbeat = 0.0
         while True:
             db.refresh(run)
             control = self._control_state(db, run)
-            if run.status == "cancelled":
+            if run.status in {"cancel_requested", "cancelled"} or control.status in {"cancel_requested", "cancelled"}:
+                self._finalize_cancellation(db, run)
                 return "cancelled"
             if control.status == "step_once":
                 return "step_once"
             if run.status != PENDING and control.status != "paused":
                 return "running"
+            if time.monotonic() - last_capacity_heartbeat >= 30:
+                if heartbeat_workflow_slot(db, run.id):
+                    db.commit()
+                last_capacity_heartbeat = time.monotonic()
             time.sleep(0.25)
+
+    def _finalize_cancellation(self, db: Session, run: WorkflowRun, *, commit: bool = True) -> None:
+        if run.status == "cancelled":
+            release_workflow_slot(db, run.id)
+            if commit:
+                db.commit()
+            return
+        control = self._control_state(db, run)
+        control.status = "cancelled"
+        control.current_sop_step = "cancellation_acknowledged"
+        control.outputs_json = [item for item in (control.outputs_json or []) if item != "temporal_activity_active"]
+        run.status = "cancelled"
+        run.current_phase = "cancelled"
+        run.current_node = "FINAL"
+        run.finished_at = utcnow()
+        release_workflow_slot(db, run.id)
+        emit_event(
+            db,
+            run.id,
+            "run.cancellation_acknowledged",
+            "Runner acknowledged cancellation after leaving the active step.",
+            status="cancelled",
+        )
+        if commit:
+            db.commit()
 
     def _sleep_between_steps(self) -> None:
         from app.core.config import get_settings
@@ -874,10 +1096,14 @@ class ProductionPipelineProvider:
         report = self._run_tests(db, run, "QA Engineer")
         content = f"# TEST_REPORT.md\n\nFinal status: {report.status}\n\nPassed: {report.passed_count}\nFailed: {report.failed_count}\n\n```text\n{report.stdout}\n{report.stderr}\n```\n"
         self._artifact(db, run, "QA Engineer", "markdown", "TEST_REPORT.md", content)
-        emit_event(db, run.id, "test.passed", "Testes finais passaram de verdade.", node_id="QA Engineer", phase="testing", agent_name="QA Engineer", payload={"test_report_id": report.id})
-        emit_event(db, run.id, "test.summary", "Resumo de testes registrado.", node_id="QA Engineer", phase="testing", agent_name="QA Engineer", payload={"passed": report.passed_count, "failed": report.failed_count})
-        self._create_traceability(db, run)
-        self._finish_node(db, run, state, SUCCESS, "QA final passou.")
+        event_type = "test.passed" if report.status == "passed" else "test.failed"
+        emit_event(db, run.id, event_type, f"Testes finais: {report.status}.", node_id="QA Engineer", phase="testing", agent_name="QA Engineer", status=report.status, payload={"test_report_id": report.id})
+        emit_event(db, run.id, "test.summary", "Resumo de testes registrado.", node_id="QA Engineer", phase="testing", agent_name="QA Engineer", payload={"passed": report.passed_count, "failed": report.failed_count, "status": report.status})
+        if report.status == "passed":
+            self._create_traceability(db, run)
+            self._finish_node(db, run, state, SUCCESS, "QA final passou.")
+        else:
+            self._finish_node(db, run, state, FAILED, "QA final falhou; nenhum evento de aprovação ou rastreabilidade pass foi emitido.")
 
     def _post_test_agents(self, db: Session, run: WorkflowRun) -> None:
         for node_id, phase in POST_TEST_AGENT_SEQUENCE:
@@ -885,37 +1111,39 @@ class ProductionPipelineProvider:
 
     def _run_post_test_agent(self, db: Session, run: WorkflowRun, node_id: str, phase: str) -> None:
         artifacts = [
-            ("Visual QA Agent", "visual_qa", "VISUAL_QA_REPORT.md", "# VISUAL_QA_REPORT.md\n\nStatus: passed\n\nThe generated backend has minimal UI needs; factory console presents clean operational panels."),
-            ("Accessibility QA Agent", "accessibility_qa", "ACCESSIBILITY_REPORT.md", "# ACCESSIBILITY_REPORT.md\n\nStatus: passed\n\nConsole uses semantic headings, buttons and readable contrast."),
-            ("Security Engineer", "security_review", "SECURITY_REVIEW.md", "# SECURITY_REVIEW.md\n\nStatus: passed\n\nNo secrets. Path traversal blocked. Test command allowlisted. Local limitations documented."),
+            ("Visual QA Agent", "visual_qa", "VISUAL_QA_REPORT.md", "# VISUAL_QA_REPORT.md\n\nStatus: review_required\n\nNo browser-based visual test was executed. Human review is required before delivery."),
+            ("Accessibility QA Agent", "accessibility_qa", "ACCESSIBILITY_REPORT.md", "# ACCESSIBILITY_REPORT.md\n\nStatus: review_required\n\nNo automated accessibility scan was executed. Human review is required before delivery."),
+            ("Security Engineer", "security_review", "SECURITY_REVIEW.md", "# SECURITY_REVIEW.md\n\nStatus: review_required\n\nObserved controls: exact command allowlist and path validation. No SAST/DAST scan was executed; human review is required."),
             ("DevOps Engineer", "devops_packaging", "DEPLOYMENT.md", "# DEPLOYMENT.md\n\nRun with docker compose. Generated app includes local pytest setup."),
-            ("Release Manager", "release_management", "RELEASE_NOTES.md", "# RELEASE_NOTES.md\n\nContractFlow Enterprise is ready for controlled production-only homologation."),
+            ("Release Manager", "release_management", "RELEASE_NOTES.md", "# RELEASE_NOTES.md\n\nDeterministic package is ready for assisted homologation review; it is not a production SLA declaration."),
         ]
         lookup = {agent: (agent_phase, name, content) for agent, agent_phase, name, content in artifacts}
         artifact_phase, name, content = lookup[node_id]
         state = self._start_node(db, run, node_id, artifact_phase or phase)
         event_type = {
-            "Visual QA Agent": "visual_qa.passed",
-            "Accessibility QA Agent": "accessibility.passed",
-            "Security Engineer": "security_review.passed",
+            "Visual QA Agent": "visual_qa.review_requested",
+            "Accessibility QA Agent": "accessibility.review_requested",
+            "Security Engineer": "security_review.review_requested",
         }.get(node_id)
         self._artifact(db, run, node_id, "markdown", name, content)
         if event_type:
-            emit_event(db, run.id, event_type, f"{node_id} passou.", node_id=node_id, phase=phase, agent_name=node_id)
-        self._finish_node(db, run, state, SUCCESS, f"{node_id} finalizado.")
+            emit_event(db, run.id, event_type, f"{node_id} requires human review.", node_id=node_id, phase=phase, agent_name=node_id, status=PENDING)
+        node_status = PENDING if event_type else SUCCESS
+        self._finish_node(db, run, state, node_status, f"{node_id} finalizado com status {node_status}.")
 
     def _request_human_approval(self, db: Session, run: WorkflowRun) -> None:
         run.status = WAITING_FOR_HUMAN
         run.current_phase = "human_homologation_approval"
         run.current_node = "Human Approval"
         run.updated_at = utcnow()
+        release_workflow_slot(db, run.id)
         approval = ApprovalRequest(
             id=str(uuid.uuid4()),
             tenant_id=run.tenant_id,
             run_id=run.id,
             node_id="Human Approval",
             title="Aprovação final de homologação",
-            description="HRS >= 90, sem hard blockers, pacote criado e testes finais passando.",
+            description="Evidências determinísticas e pacote concluídos; decisão humana final pendente.",
             status=PENDING,
             requested_action="approve_for_homologation",
             risk_level="low",
@@ -936,101 +1164,125 @@ class ProductionPipelineProvider:
 
     def _quality_and_homologation(self, db: Session, run: WorkflowRun) -> None:
         state = self._start_node(db, run, "Quality Governor", "quality_governance")
+        self._artifact(
+            db,
+            run,
+            "Quality Governor",
+            "markdown",
+            "MANUAL.md",
+            "# MANUAL.md\n\nUse the generated README and pytest command for local validation.\n",
+        )
+        db.flush()
+        artifact_names = {row.name for row in db.query(Artifact).filter_by(run_id=run.id, tenant_id=run.tenant_id).all()}
+        final_test = (
+            db.query(TestReport)
+            .filter_by(run_id=run.id, tenant_id=run.tenant_id, status="passed")
+            .order_by(TestReport.created_at.desc())
+            .first()
+        )
+        observed = {
+            "requirements": db.query(Requirement).filter_by(run_id=run.id, tenant_id=run.tenant_id).count() > 0,
+            "acceptance_criteria": db.query(AcceptanceCriterion).filter_by(run_id=run.id, tenant_id=run.tenant_id).count() > 0,
+            "scope": "SCOPE.md" in artifact_names,
+            "architecture": "SYSTEM_DESIGN.md" in artifact_names,
+            "ux": "UX_SPEC.md" in artifact_names,
+            "data": "DATA_MODEL.md" in artifact_names,
+            "api": "API_SPEC.md" in artifact_names,
+            "implementation": db.query(FileChange).filter_by(run_id=run.id, tenant_id=run.tenant_id).count() > 0,
+            "code_review": "REVIEW_REPORT_APPROVED.md" in artifact_names,
+            "tests": final_test is not None,
+            "traceability": db.query(RequirementTrace).filter_by(run_id=run.id, tenant_id=run.tenant_id).count() > 0,
+            "documentation": "MANUAL.md" in artifact_names,
+        }
         hard_blockers: List[str] = []
-        score, score_rows = calculate_homologation_score()
-        for row in score_rows:
-            db.add(
-                QualityScore(
-                    id=str(uuid.uuid4()),
-                    run_id=run.id,
-                    category=row["category"],
-                    score=row["score"],
-                    weight=row["weight"],
-                    weighted_score=row["weighted_score"],
-                    evidence_json=row["evidence"],
-                )
-            )
-        status = status_for_score(score, hard_blockers)
-        run.homologation_readiness_score = score
+        if not observed["tests"]:
+            hard_blockers.append("No real passing test report")
+        if not observed["traceability"]:
+            hard_blockers.append("Traceability matrix missing")
+        gate_rows: List[QualityGate] = []
         for gate_id, name, category in QUALITY_GATES:
-            gate_status = "pending" if gate_id == "human_approval" else "passed"
+            if gate_id in {"visual_qa", "accessibility", "security"}:
+                gate_status, gate_score, classification = "review_required", 60, "recommendation"
+            elif gate_id in {"human_approval", "homologation_package"}:
+                gate_status, gate_score, classification = "pending", 0, "declared"
+            else:
+                passed = observed.get(gate_id, True)
+                gate_status, gate_score, classification = ("passed", 100, "real" if gate_id == "tests" else "calculated") if passed else ("blocked", 0, "calculated")
             emit_event(db, run.id, "quality.gate_started", f"{name} iniciado.", node_id="Quality Governor", phase="quality_governance")
-            db.add(
-                QualityGate(
-                    id=str(uuid.uuid4()),
-                    run_id=run.id,
-                    gate_id=gate_id,
-                    name=name,
-                    category=category,
-                    status=gate_status,
-                    score=0 if gate_status == "pending" else 100,
-                    blockers_json=[],
-                    warnings_json=[] if gate_status == "passed" else ["Awaiting human approval"],
-                    evidence_json={"status": gate_status},
-                )
+            gate = QualityGate(
+                id=str(uuid.uuid4()),
+                run_id=run.id,
+                gate_id=gate_id,
+                name=name,
+                category=category,
+                status=gate_status,
+                score=gate_score,
+                blockers_json=[] if gate_status != "blocked" else [f"Missing observed evidence for {gate_id}"],
+                warnings_json=[] if gate_status == "passed" else ["Human review or additional evidence required"],
+                evidence_json={"status": gate_status, "classification": classification, "observed": observed.get(gate_id)},
             )
+            db.add(gate)
+            gate_rows.append(gate)
             emit_event(
                 db,
                 run.id,
-                "quality.gate_passed" if gate_status == "passed" else "quality.gate_started",
+                "quality.gate_passed" if gate_status == "passed" else "quality.gate_review_required",
                 f"{name}: {gate_status}.",
                 node_id="Quality Governor",
                 phase="quality_governance",
                 status=gate_status,
             )
-        emit_event(db, run.id, "quality.score_updated", f"HRS calculado: {score}.", node_id="Quality Governor", phase="quality_governance", payload={"score": score, "status": status})
+        db.flush()
+        package_gate = next(gate for gate in gate_rows if gate.gate_id == "homologation_package")
+        provisional_score = round(sum(gate.score for gate in gate_rows) / len(gate_rows), 2)
+        provider_mode = get_settings().agent_provider.lower()
         risk = RiskItem(
             id=str(uuid.uuid4()),
             run_id=run.id,
-            title="Real provider budget and latency",
-            description="A execução usa LiteLLM com OpenRouter/OpenAI real e está sujeita a orçamento, latência e rate limits.",
+            title="Provider mode and operational limitations",
+            description=f"Provider mode is {provider_mode}; real cost/latency evidence exists only when LiteLLM is enabled.",
             severity="low",
             mitigation="Aplicar budgets, retries e auditoria por tenant no LiteLLM.",
             status="mitigated",
         )
         db.add(risk)
-        risk_register = "# RISK_REGISTER.md\n\n| Risco | Severidade | Mitigação | Status |\n|---|---|---|---|\n| Real provider budget and latency | low | Budgets, retries and audit by tenant | mitigated |\n"
+        risk_register = f"# RISK_REGISTER.md\n\n| Risco | Severidade | Mitigação | Status |\n|---|---|---|---|\n| Model provider: {provider_mode} | low | Preserve usage-based cost provenance | controlled |\n| Visual/accessibility/security review | medium | Explicit human review before delivery | open |\n"
         self._artifact(db, run, "Quality Governor", "markdown", "RISK_REGISTER.md", risk_register)
         self._artifact(db, run, "Quality Governor", "markdown", "UAT_PLAN.md", "# UAT_PLAN.md\n\n1. Criar cliente.\n2. Criar contrato.\n3. Criar fatura.\n4. Marcar fatura como paga.\n5. Validar total em aberto.\n")
-        self._artifact(db, run, "Quality Governor", "markdown", "MANUAL.md", "# MANUAL.md\n\nUse the generated README and pytest command for local validation.\n")
-        hom_report = f"# HOMOLOGATION_REPORT.md\n\nStatus técnico: {status}\n\nHRS: {score}\n\nHard blockers: 0\n\nAguardando aprovação humana final.\n"
+        hom_report = f"# HOMOLOGATION_REPORT.md\n\nStatus técnico: awaiting_human_review\n\nHRS provisório calculado: {provisional_score}\n\n## Evidência real\n\n- Pytest final: {'passed' if final_test else 'missing'}\n\n## Premissas e limitações\n\n- Provider: {provider_mode}\n- Visual, acessibilidade e segurança exigem revisão humana.\n- Generative Build permanece bloqueado.\n\n## Hard blockers\n\n{chr(10).join(f'- {item}' for item in hard_blockers) or '- Nenhum'}\n"
         self._artifact(db, run, "Quality Governor", "markdown", "HOMOLOGATION_REPORT.md", hom_report)
-        db.add(
-            HomologationReport(
+        status = "blocked" if hard_blockers else "awaiting_human_review"
+        report_row = HomologationReport(
                 id=str(uuid.uuid4()),
                 run_id=run.id,
                 status=status,
-                score=score,
+                score=provisional_score,
                 blockers_json=hard_blockers,
                 risks_json=[{"title": risk.title, "severity": risk.severity}],
-                summary="Entrega tecnicamente pronta para homologação production-only.",
+                summary="Deterministic package evaluated from observed evidence; manual gates remain explicit.",
+            )
+        db.add(report_row)
+        self._build_package(db, run, provisional_score, status, hard_blockers)
+        package_gate.status = "passed"
+        package_gate.score = 100
+        package_gate.warnings_json = []
+        package_gate.evidence_json = {"status": "passed", "classification": "real", "source": "homologation_packages"}
+        score = round(sum(gate.score for gate in gate_rows) / len(gate_rows), 2)
+        run.homologation_readiness_score = score
+        report_row.score = score
+        db.add(
+            QualityScore(
+                id=str(uuid.uuid4()),
+                run_id=run.id,
+                category="Observed gate coverage",
+                score=score,
+                weight=100,
+                weighted_score=score,
+                evidence_json={"classification": "calculated", "gate_count": len(gate_rows), "hard_blockers": hard_blockers},
             )
         )
-        self._build_package(db, run, score, status, hard_blockers)
-        self._finish_node(db, run, state, status, f"Quality Governor aprovou tecnicamente com HRS {score}.")
-
-    def _optimizer_candidate(self, db: Session, run: WorkflowRun) -> None:
-        adapter = AFlowOptimizerAdapter()
-        proposal = adapter.propose_candidate(run.workflow_id, [], run.homologation_readiness_score)
-        candidate = WorkflowCandidate(
-            id=str(uuid.uuid4()),
-            source_workflow_id=proposal["source_workflow_id"],
-            candidate_workflow_id=proposal["candidate_workflow_id"],
-            status="candidate",
-            score=proposal["score"],
-            modification_summary=proposal["modification_summary"],
-        )
-        db.add(candidate)
-        emit_event(
-            db,
-            run.id,
-            "workflow.optimization_candidate_created",
-            "Workflow optimizer registrou candidato.",
-            node_id="Workflow Optimizer",
-            phase="learning",
-            agent_name="Workflow Optimizer",
-            payload={"candidate_id": candidate.id, "summary": candidate.modification_summary},
-        )
+        emit_event(db, run.id, "quality.score_updated", f"Observed-evidence HRS calculated: {score}.", node_id="Quality Governor", phase="quality_governance", payload={"score": score, "status": status})
+        self._finish_node(db, run, state, FAILED if hard_blockers else PENDING, f"Quality Governor recorded HRS {score}; manual review remains.")
 
     def _start_node(
         self,
@@ -1080,6 +1332,9 @@ class ProductionPipelineProvider:
         emit_event(db, run.id, "cost.updated", "Custo estimado atualizado.", payload={"cost_estimate": run.cost_estimate})
 
     def _artifact(self, db: Session, run: WorkflowRun, node_id: str, artifact_type: str, name: str, content: str) -> Artifact:
+        classification = "real" if name.startswith("TEST_REPORT") else "recommendation"
+        if name in {"HOMOLOGATION_REPORT.md", "TRACEABILITY_MATRIX.md"}:
+            classification = "calculated"
         artifact = Artifact(
             id=str(uuid.uuid4()),
             run_id=run.id,
@@ -1088,16 +1343,20 @@ class ProductionPipelineProvider:
             name=name,
             path=f"docs/{name}",
             content=content,
-            metadata_json={"generated_by": node_id},
+            evidence_classification=classification,
+            source_refs_json=[run.id],
+            metadata_json={"generated_by": node_id, "classification": classification, "storage_key": ""},
         )
         db.add(artifact)
-        payload = {"artifact_id": artifact.id, "name": name, "from_agent": node_id, "to_agent": HANDOFFS.get(node_id, ""), "role": AGENT_ROLES.get(node_id, (node_id, "", []))[0], "sop_step": "artifact_output", "input_refs": [], "output_refs": [name], "confidence": 0.94, "decision": "drafted", "next_action": "review_or_handoff"}
+        storage_key = object_storage.put_text(run.tenant_id, run.id, "artifacts", name, content, content_type="text/markdown; charset=utf-8")
+        artifact.metadata_json = {**artifact.metadata_json, "storage_key": storage_key or ""}
+        payload = {"artifact_id": artifact.id, "name": name, "storage_key": storage_key or "", "from_agent": node_id, "to_agent": HANDOFFS.get(node_id, ""), "role": AGENT_ROLES.get(node_id, (node_id, "", []))[0], "sop_step": "artifact_output", "input_refs": [], "output_refs": [name], "confidence": 0.94, "decision": "drafted", "next_action": "review_or_handoff"}
         emit_event(db, run.id, "artifact.drafted", f"{node_id} redigiu {name}.", node_id=node_id, agent_name=node_id, payload=payload)
         emit_event(db, run.id, "artifact.created", f"Artifact {name} criado.", node_id=node_id, agent_name=node_id, payload=payload)
         return artifact
 
     def _save_file(self, db: Session, run: WorkflowRun, node_id: str, rel_path: str, content: str) -> FileChange:
-        root = run_workspace(run.id)
+        root = run_workspace(run.id, run.tenant_id)
         path = safe_join(root, rel_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         before = path.read_text() if path.exists() else ""
@@ -1115,12 +1374,13 @@ class ProductionPipelineProvider:
             diff=diff,
         )
         db.add(change)
-        emit_event(db, run.id, f"file.{change_type}", f"Arquivo {rel_path} {change_type}.", node_id=node_id, agent_name=node_id, payload={"file_path": rel_path})
+        storage_key = object_storage.put_text(run.tenant_id, run.id, "workspace", rel_path, content)
+        emit_event(db, run.id, f"file.{change_type}", f"Arquivo {rel_path} {change_type}.", node_id=node_id, agent_name=node_id, payload={"file_path": rel_path, "storage_key": storage_key or ""})
         emit_event(db, run.id, "file.diff", f"Diff criado para {rel_path}.", node_id=node_id, agent_name=node_id, payload={"file_path": rel_path})
         return change
 
     def _run_tests(self, db: Session, run: WorkflowRun, node_id: str) -> TestReport:
-        workspace = run_workspace(run.id)
+        workspace = run_workspace(run.id, run.tenant_id)
         emit_event(db, run.id, "test.started", "Executando python -m pytest generated_app/tests.", node_id=node_id, phase="testing", agent_name=node_id)
         result = run_generated_tests(workspace, db=db, tenant_id=run.tenant_id, run_id=run.id)
         report = TestReport(id=str(uuid.uuid4()), run_id=run.id, **result)
@@ -1191,49 +1451,107 @@ class ProductionPipelineProvider:
 
     def _build_package(self, db: Session, run: WorkflowRun, score: float, status: str, blockers: List[str]) -> None:
         emit_event(db, run.id, "homologation.package_started", "Iniciando pacote de homologação.", node_id="Quality Governor")
-        delivery = run_delivery(run.id)
+        delivery = run_delivery(run.id, run.tenant_id)
         for folder in ["source-code", "docs", "deploy", "evidence/test-logs", "evidence/diffs"]:
             (delivery / folder).mkdir(parents=True, exist_ok=True)
-        source = run_workspace(run.id) / "generated_app"
+        source = run_workspace(run.id, run.tenant_id) / "generated_app"
         target = delivery / "source-code" / "generated_app"
         if target.exists():
             shutil.rmtree(target)
-        shutil.copytree(source, target)
-        for artifact in db.query(Artifact).filter_by(run_id=run.id).all():
-            (delivery / "docs" / artifact.name).write_text(artifact.content)
-        (delivery / "deploy" / "docker-compose.yml").write_text("services:\n  generated-app:\n    build: ../source-code/generated_app\n")
-        (delivery / "deploy" / ".env.example").write_text("APP_ENV=local\n")
-        (delivery / "deploy" / "healthcheck.md").write_text("# Healthcheck\n\nRun pytest and inspect README.\n")
-        final_report = db.query(TestReport).filter_by(run_id=run.id, status="passed").order_by(TestReport.created_at.desc()).first()
-        (delivery / "evidence" / "test-logs" / "pytest-final.log").write_text((final_report.stdout if final_report else "") + (final_report.stderr if final_report else ""))
-        all_diffs = "\n\n".join(change.diff for change in db.query(FileChange).filter_by(run_id=run.id).all())
-        (delivery / "evidence" / "diffs" / "changes.diff").write_text(all_diffs)
-        events = db.query(AgentEvent).filter_by(run_id=run.id).order_by(AgentEvent.created_at.asc()).all()
-        (delivery / "evidence" / "agent-events.jsonl").write_text("\n".join(json.dumps({"id": e.id, "type": e.event_type, "summary": e.summary, "created_at": e.created_at.isoformat()}) for e in events))
-        decisions = db.query(DecisionRecord).filter_by(run_id=run.id).all()
-        (delivery / "evidence" / "decisions.jsonl").write_text("\n".join(json.dumps({"title": d.title, "decision": d.decision}) for d in decisions))
-        gates = db.query(QualityGate).filter_by(run_id=run.id).all()
-        (delivery / "evidence" / "quality-gates.json").write_text(json.dumps([{"gate_id": g.gate_id, "status": g.status, "score": g.score} for g in gates], indent=2))
-        (delivery / "evidence" / "homologation-score.json").write_text(json.dumps({"hrs": score, "status": status, "blockers": blockers}, indent=2))
+        for source_file in source.rglob("*"):
+            if source_file.is_file():
+                relative = source_file.relative_to(source)
+                self._save_delivery_file(db, run, delivery, f"source-code/generated_app/{relative}", source_file.read_text())
+        for artifact in db.query(Artifact).filter_by(run_id=run.id, tenant_id=run.tenant_id).all():
+            artifact.audience = "reviewer"
+            self._save_delivery_file(db, run, delivery, f"docs/{artifact.name}", artifact.content)
+        self._save_delivery_file(db, run, delivery, "deploy/docker-compose.yml", "services:\n  generated-app:\n    build: ../source-code/generated_app\n")
+        self._save_delivery_file(db, run, delivery, "deploy/.env.example", "APP_ENV=local\n")
+        self._save_delivery_file(db, run, delivery, "deploy/healthcheck.md", "# Healthcheck\n\nRun pytest and inspect README.\n")
+        final_report = db.query(TestReport).filter_by(run_id=run.id, tenant_id=run.tenant_id, status="passed").order_by(TestReport.created_at.desc()).first()
+        self._save_delivery_file(db, run, delivery, "evidence/test-logs/pytest-final.log", (final_report.stdout if final_report else "") + (final_report.stderr if final_report else ""))
+        all_diffs = "\n\n".join(change.diff for change in db.query(FileChange).filter_by(run_id=run.id, tenant_id=run.tenant_id).all())
+        self._save_delivery_file(db, run, delivery, "evidence/diffs/changes.diff", all_diffs)
+        events = db.query(AgentEvent).filter_by(run_id=run.id, tenant_id=run.tenant_id).order_by(AgentEvent.created_at.asc()).all()
+        self._save_delivery_file(db, run, delivery, "evidence/agent-events.jsonl", "\n".join(json.dumps({"id": e.id, "type": e.event_type, "summary": e.summary, "created_at": e.created_at.isoformat()}) for e in events))
+        decisions = db.query(DecisionRecord).filter_by(run_id=run.id, tenant_id=run.tenant_id).all()
+        self._save_delivery_file(db, run, delivery, "evidence/decisions.jsonl", "\n".join(json.dumps({"title": d.title, "decision": d.decision}) for d in decisions))
+        gates = db.query(QualityGate).filter_by(run_id=run.id, tenant_id=run.tenant_id).all()
+        self._save_delivery_file(db, run, delivery, "evidence/quality-gates.json", json.dumps([{"gate_id": g.gate_id, "status": g.status, "score": g.score} for g in gates], indent=2))
+        self._save_delivery_file(db, run, delivery, "evidence/homologation-score.json", json.dumps({"hrs": score, "status": status, "blockers": blockers}, indent=2))
+        ai_native = run.generation_mode == "ai_native_v2"
         manifest = {
             "run_id": run.id,
             "project_id": run.project_id,
             "generated_at": datetime.utcnow().isoformat(),
             "status": status,
             "hrs": score,
-            "artifacts": [a.name for a in db.query(Artifact).filter_by(run_id=run.id).all()],
-            "source_files": [c.file_path for c in db.query(FileChange).filter_by(run_id=run.id).all()],
+            "artifacts": [
+                {
+                    "id": artifact.id,
+                    "name": artifact.name,
+                    "classification": artifact.evidence_classification,
+                    "sources": artifact.source_refs_json,
+                    "audience": artifact.audience,
+                    "model_call_id": artifact.model_call_id,
+                    "step_execution_id": artifact.step_execution_id,
+                }
+                for artifact in db.query(Artifact).filter_by(run_id=run.id, tenant_id=run.tenant_id).all()
+            ],
+            "source_files": [c.file_path for c in db.query(FileChange).filter_by(run_id=run.id, tenant_id=run.tenant_id).all()],
             "tests": {"final_status": final_report.status if final_report else "missing"},
             "gates": [g.gate_id for g in gates],
             "blockers": blockers,
-            "risks": ["Real provider budget and latency"],
+            "evidence_policy": {
+                "allowed_classifications": ["real", "declared", "calculated", "estimated", "recommendation"],
+                "assumptions": [
+                    (
+                        "Visual, accessibility and security gates are backed by persisted allowlisted sandbox reports."
+                        if ai_native
+                        else "Visual, accessibility and security gates remain human-reviewed unless a real scanner report is attached."
+                    ),
+                    "Estimated costs are derived only from persisted model-call usage.",
+                ],
+            },
+            "risks": ["Human homologation decision pending", "Assisted pilot without contractual SLA"],
         }
-        (delivery / "manifest.json").write_text(json.dumps(manifest, indent=2))
-        db.add(HomologationPackage(id=str(uuid.uuid4()), run_id=run.id, path=str(delivery), status="created", manifest_json=manifest))
-        emit_event(db, run.id, "homologation.package_created", "Pacote de homologação criado.", node_id="Quality Governor", payload={"path": str(delivery)})
+        package_prefix = f"{object_storage.run_prefix(run.tenant_id, run.id)}/delivery"
+        manifest["storage_prefix"] = package_prefix if object_storage.enabled else ""
+        self._save_delivery_file(db, run, delivery, "manifest.json", json.dumps(manifest, indent=2))
+        package_path = object_storage.uri(package_prefix) if object_storage.enabled else str(delivery)
+        db.add(HomologationPackage(id=str(uuid.uuid4()), tenant_id=run.tenant_id, run_id=run.id, path=package_path, status="created", manifest_json=manifest))
+        emit_event(db, run.id, "homologation.package_created", "Pacote de homologação criado.", node_id="Quality Governor", payload={"path": package_path})
 
-    def read_workspace_file(self, run_id: str, relative_path: str) -> str:
-        path = safe_join(run_workspace(run_id), relative_path)
+    def _save_delivery_file(self, db: Session, run: WorkflowRun, delivery: Path, relative_path: str, content: str) -> None:
+        path = safe_join(delivery, relative_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        before = path.read_text() if path.exists() else ""
+        path.write_text(content)
+        change_type = "updated" if before else "created"
+        change = FileChange(
+            id=str(uuid.uuid4()),
+            tenant_id=run.tenant_id,
+            run_id=run.id,
+            node_id="Quality Governor",
+            file_path=f"delivery/{relative_path}",
+            change_type=change_type,
+            before_content=before,
+            after_content=content,
+            diff=unified_diff(f"delivery/{relative_path}", before, content),
+        )
+        db.add(change)
+        storage_key = object_storage.put_text(run.tenant_id, run.id, "delivery", relative_path, content)
+        emit_event(
+            db,
+            run.id,
+            f"file.{change_type}",
+            f"Delivery file {relative_path} {change_type}.",
+            node_id="Quality Governor",
+            payload={"file_path": f"delivery/{relative_path}", "storage_key": storage_key or ""},
+        )
+
+    def read_workspace_file(self, run_id: str, relative_path: str, tenant_id: str) -> str:
+        path = safe_join(run_workspace(run_id, tenant_id), relative_path)
         return path.read_text()
 
     def _generated_app_files(self, initial: bool) -> Dict[str, str]:

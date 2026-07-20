@@ -54,6 +54,8 @@ class McpToolExecutor:
         server_name = ""
         try:
             policy = self.registry.is_allowed(db, tenant_id, tool_name)
+            if (policy.constraints_json or {}).get("access_mode") != "read_only":
+                raise McpPolicyError("Assisted pilot blocks write-enabled MCP tool policies")
             server_name = policy.server_name
             server = db.query(McpServer).filter_by(tenant_id=tenant_id, name=policy.server_name, enabled=True).first()
             if not server:

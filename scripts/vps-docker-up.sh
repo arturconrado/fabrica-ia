@@ -25,6 +25,13 @@ require_env() {
   fi
 }
 
+require_urlsafe_password() {
+  local name="$1"
+  case "${!name}" in
+    *[!a-zA-Z0-9._~-]*) die "$name must be URL-safe because it is embedded in a PostgreSQL DSN" ;;
+  esac
+}
+
 require_llm_upstream_env() {
   if [ -z "${OPENROUTER_API_KEY:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
     die "OPENROUTER_API_KEY or OPENAI_API_KEY is required for VPS production Docker deployment"
@@ -58,6 +65,8 @@ wait_for_pvc_bound() {
     fi
     sleep 2
   done
+  require_urlsafe_password ASF_POSTGRES_PASSWORD
+  require_urlsafe_password ASF_POSTGRES_APP_PASSWORD
   kubectl --context "$context" -n "$namespace" get pvc "$pvc" || true
   die "PVC $namespace/$pvc did not become Bound"
 }
@@ -99,25 +108,48 @@ wait_for_public_health() {
 
 render_keycloak_realm() {
   mkdir -p "$REPO_ROOT/data/keycloak-import"
-  python3 - "$REPO_ROOT/deploy/keycloak/software-factory-realm.json" "$REPO_ROOT/data/keycloak-import/software-factory-realm.vps.json" "$ASF_PUBLIC_DOMAIN" "$ASF_DEFAULT_TENANT_ID" "$ASF_DEFAULT_TENANT_NAME" <<'PY'
+  python3 - "$REPO_ROOT/deploy/keycloak/software-factory-realm.json" "$REPO_ROOT/data/keycloak-import/software-factory-realm.vps.json" "$ASF_PUBLIC_DOMAIN" "$ASF_DEFAULT_TENANT_ID" "$ASF_DEFAULT_TENANT_NAME" "$ASF_VPS_OPERATOR_SUBJECT" "$ASF_VPS_KEYCLOAK_USER" "$ASF_VPS_KEYCLOAK_PASSWORD" <<'PY'
 import json
 import sys
 
-source, target, public_domain, tenant_id, tenant_name = sys.argv[1:6]
+source, target, public_domain, tenant_id, tenant_name, subject, username, password = sys.argv[1:9]
 with open(source, "r", encoding="utf-8") as handle:
     realm = json.load(handle)
 for client in realm.get("clients", []):
     if client.get("clientId") == "software-factory-web":
         client["redirectUris"] = [f"https://{public_domain}/*"]
         client["webOrigins"] = [f"https://{public_domain}"]
-for user in realm.get("users", []):
-    if user.get("username") == "operator@local.dev":
-        user.setdefault("attributes", {})
-        user["attributes"]["tenant_id"] = [tenant_id]
-        user["attributes"]["tenant_name"] = [tenant_name]
+realm["clients"] = [client for client in realm.get("clients", []) if client.get("clientId") != "software-factory-validation"]
+operator = next(user for user in realm.get("users", []) if user.get("username") == "operator@local.dev")
+operator["id"] = subject
+operator["username"] = username
+operator["email"] = username
+operator["credentials"] = [{"type": "password", "value": password, "temporary": False}]
+operator.setdefault("attributes", {})
+operator["attributes"]["tenant_id"] = [tenant_id]
+operator["attributes"]["tenant_name"] = [tenant_name]
+realm["users"] = [operator]
 with open(target, "w", encoding="utf-8") as handle:
     json.dump(realm, handle, indent=2)
 PY
+}
+
+render_alertmanager_config() {
+  mkdir -p "$REPO_ROOT/data/observability"
+  python3 - "$REPO_ROOT/data/observability/alertmanager.yml" "$ASF_ALERT_WEBHOOK_URL" <<'PY'
+import json
+import sys
+
+target, webhook_url = sys.argv[1:3]
+with open(target, "w", encoding="utf-8") as handle:
+    handle.write(
+        "global:\n  resolve_timeout: 5m\n"
+        "route:\n  receiver: asf-operations\n  group_wait: 30s\n  group_interval: 5m\n  repeat_interval: 4h\n"
+        "receivers:\n  - name: asf-operations\n    webhook_configs:\n      - send_resolved: true\n"
+        f"        url: {json.dumps(webhook_url)}\n"
+    )
+PY
+  chmod 0600 "$REPO_ROOT/data/observability/alertmanager.yml"
 }
 
 main() {
@@ -133,11 +165,20 @@ main() {
 
   require_llm_upstream_env
   for name in \
-    ASF_PUBLIC_DOMAIN ASF_API_DOMAIN ASF_AUTH_DOMAIN ASF_MINIO_DOMAIN ASF_TEMPORAL_DOMAIN ASF_TLS_EMAIL \
+    ASF_PUBLIC_DOMAIN ASF_API_DOMAIN ASF_AUTH_DOMAIN ASF_MINIO_DOMAIN ASF_TLS_EMAIL \
     ASF_LITELLM_API_KEY ASF_POSTGRES_PASSWORD ASF_TEMPORAL_POSTGRES_PASSWORD \
-    ASF_KEYCLOAK_DB_PASSWORD KEYCLOAK_ADMIN_PASSWORD ASF_MINIO_ROOT_USER ASF_MINIO_ROOT_PASSWORD; do
+    ASF_POSTGRES_APP_PASSWORD ASF_KEYCLOAK_DB_PASSWORD KEYCLOAK_ADMIN_PASSWORD \
+    ASF_MINIO_ROOT_USER ASF_MINIO_ROOT_PASSWORD ASF_VPS_OPERATOR_SUBJECT \
+    ASF_VPS_KEYCLOAK_USER ASF_VPS_KEYCLOAK_PASSWORD ASF_BACKUP_REMOTE_ENDPOINT \
+    ASF_BACKUP_REMOTE_ACCESS_KEY ASF_BACKUP_REMOTE_SECRET_KEY ASF_BACKUP_REMOTE_BUCKET \
+    ASF_ALERT_WEBHOOK_URL; do
     require_env "$name"
   done
+  case "$ASF_BACKUP_REMOTE_ENDPOINT" in
+    *localhost*|*127.0.0.1*|*minio:9000*|*"$ASF_MINIO_DOMAIN"*)
+      die "ASF_BACKUP_REMOTE_ENDPOINT must be outside this VPS/MinIO deployment"
+      ;;
+  esac
 
   export ASF_DEFAULT_TENANT_ID="${ASF_DEFAULT_TENANT_ID:-production}"
   export ASF_DEFAULT_TENANT_NAME="${ASF_DEFAULT_TENANT_NAME:-Production}"
@@ -156,6 +197,7 @@ main() {
   sed "s#__ASF_WORKSPACE_HOST_PATH__#$REPO_ROOT/data/api/workspaces#g" \
     "$REPO_ROOT/deploy/kind/asf-local.yaml" > "$kind_config_path"
   render_keycloak_realm
+  render_alertmanager_config
 
   if ! kind get clusters | grep -qx "$cluster_name"; then
     log "Creating kind cluster $cluster_name"
@@ -189,6 +231,19 @@ main() {
   wait_for_container_health temporal-postgres
   wait_for_container_health keycloak-postgres
   wait_for_container_health api
+  wait_for_container_health backup-offsite
+  wait_for_container_health alertmanager
+  log "Bootstrapping the first tenant and owner with the configured OIDC subject"
+  docker compose -f "$COMPOSE_FILE" exec -T api \
+    -e DATABASE_URL="postgresql+psycopg://factory:$ASF_POSTGRES_PASSWORD@postgres:5432/factory" \
+    -e ASF_DATABASE_URL="postgresql+psycopg://factory:$ASF_POSTGRES_PASSWORD@postgres:5432/factory" \
+    python -m app.cli.bootstrap_tenant \
+    --tenant-id "$ASF_DEFAULT_TENANT_ID" \
+    --tenant-name "$ASF_DEFAULT_TENANT_NAME" \
+    --subject "$ASF_VPS_OPERATOR_SUBJECT" \
+    --email "$ASF_VPS_KEYCLOAK_USER" \
+    --name "Initial Owner" \
+    --confirm "bootstrap assisted pilot tenant"
   wait_for_public_health
 
   log "VPS Docker stack is ready. Run: make vps-docker-validate"

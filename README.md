@@ -1,157 +1,223 @@
 # Agentic Software Factory
 
-Fábrica enterprise de software com agentes LLM reais, workflow durável, governança, rastreabilidade, quality gates, homologação, human-in-the-loop, lote, auditoria e sandbox Kubernetes.
+Command center local-first para operar uma fábrica multiagente com OIDC, isolamento por tenant, ledger append-only, artifacts Markdown, RAG, quality gates, homologação e decisões humanas.
 
-Este repositório segue um contrato **production-only**: desenvolvimento local, homologação e produção usam o mesmo padrão arquitetural. Não existe caminho operacional simplificado para rodar sem LLM real, sem Temporal, sem OIDC ou sem sandbox Kubernetes.
+O corte atual é um piloto assistido para cinco clientes, com capacidade técnica configurável de até dez tenants. Cada cliente possui tenant, memberships, corpus RAG, objetos, runs, custos e histórico próprios. O operador pode alternar entre clientes; consultas de negócio nunca agregam seus conteúdos.
 
-## Requisitos Obrigatórios
+## Subida local
 
-- Docker. O caminho recomendado usa um container de controle que inclui Docker CLI, Compose, `kind`, `kubectl`, `curl`, Python e Make.
-- `make`, `kind` e `kubectl` no host são opcionais para quem quiser rodar os scripts diretos sem o container de controle.
-- Chave real de LLM exposta como `OPENROUTER_API_KEY` (preferencial) ou `OPENAI_API_KEY`.
-- Chave do LiteLLM gateway em `ASF_LITELLM_API_KEY`.
-- Node.js 20+ apenas se você quiser desenvolvimento frontend fora do container.
-
-## Subida Local Full-Infra
+Requisitos: Docker com Compose e uma chave nova de provedor LLM. Uma chave anteriormente compartilhada em conversa ou log deve ser revogada antes do uso.
 
 ```bash
 cp .env.example .env
+# troque os placeholders locais; a stack base mantém geração técnica desabilitada
+docker compose up --build
+```
 
-export OPENROUTER_API_KEY=sk-or-v1-...
-export ASF_LITELLM_API_KEY=change-me-real-litellm-master-key
+Para executar missões gerativas reais, configure uma chave nova, `ASF_LITELLM_API_KEY`, `ASF_ENCRYPTION_KEY` e os modelos upstream, então use `make docker-full-up`. Esse perfil sobe Temporal, MinIO e um cluster Kind para Jobs de sandbox sem rede.
 
+Serviços principais:
+
+- Interface: `http://localhost:3000`
+- API: `http://localhost:8000`
+- Keycloak: `http://localhost:8081`
+- LiteLLM: `http://localhost:4000`
+- MinIO: `http://localhost:9000` (console em `http://localhost:9001`)
+- Health: `http://localhost:8000/health`
+
+As portas do Compose local são ligadas apenas a `127.0.0.1`. Temporal UI em `http://localhost:8080` é adicionada pelo perfil full. Prometheus, Grafana, Tempo e o collector OTLP também são adicionados nesse perfil; API e worker exportam spans sem conteúdo de prompt para o collector interno.
+
+O Compose executa migrations, importa o realm OIDC com PKCE, cria somente o tenant local explicitamente configurado e associa o `sub` estável do operador. Não existe seed de runtime, usuário de demonstração, botão de token manual ou dataset fictício.
+
+Credencial local inicial do realm de desenvolvimento:
+
+- usuário: `operator@local.dev`
+- senha: `ChangeMe123!`
+
+Essa senha existe apenas no realm local versionado. Produção exige provedor OIDC e usuário configurados externamente.
+
+## Autenticação e segurança
+
+A interface usa Authorization Code + PKCE. O BFF do Next.js mantém access e refresh tokens em cookies `HttpOnly`, encaminha o bearer e o tenant à API e centraliza refresh, expiração e logout. Tokens não são armazenados no DOM, `localStorage`, `sessionStorage` ou variáveis `NEXT_PUBLIC_*`.
+
+Papéis:
+
+- Operação: `owner`, `super_admin`, `tenant_admin`, `engagement_manager`, `consultant`, `admin`, `operator`.
+- Decisão: `client_sponsor`, `process_owner`, `reviewer`; `auditor` possui leitura sem decisão.
+- Administração: `owner`, `super_admin`, `tenant_admin`, `admin`, conforme a rota.
+
+O servidor aplica RBAC; esconder um link na UI não concede nem revoga acesso. PostgreSQL usa contexto transacional e RLS forçada. Artifacts têm `audience=internal|reviewer|client`; a API de revisão expõe apenas artifacts promovidos e manifests sanitizados.
+
+## Operação dos cinco clientes
+
+Para criar os cinco tenants com o mesmo operador, obtenha o `sub` exato no OIDC e execute o bootstrap uma vez por cliente:
+
+```bash
+docker compose run --rm local-onboarding python -m app.cli.bootstrap_tenant \
+  --tenant-id cliente-01 --tenant-name 'Cliente 01' \
+  --subject 'OIDC-SUBJECT-DO-OPERADOR' \
+  --confirm 'bootstrap assisted pilot tenant'
+```
+
+Repita com IDs e nomes distintos. O portfólio enumera somente memberships operacionais ativas e calcula cada resumo em uma sessão vinculada ao tenant correspondente. Veja [operations-runbook.md](docs/operations-runbook.md).
+
+O Service Delivery OS adiciona uma camada de operação acima das runs técnicas:
+
+- `/clients` apresenta apenas os cinco clientes autorizados; `/clients/[tenantId]` só carrega o Cliente 360 depois da troca segura do tenant ativo.
+- `/service-catalog` contém exatamente oito ofertas globais versionadas. Elas são referência operacional e não seed demonstrativo.
+- `/engagements` instancia uma versão contratada, gera um plano específico com IA e exige aprovação humana antes de materializar workstreams, fila, entregáveis e equipe AI.
+- `/work-queue` aplica WIP determinístico de cinco itens globais e dois por cliente. Override exige justificativa e evento.
+- `/deliverables` mantém revisões, audiência, evidências, model call, decisão humana e entrega final separadas por tenant.
+- `/agents` governa lacunas, candidatos, três avaliações reais, homologação humana e alocação. Lacunas de ferramenta ficam bloqueadas para desenvolvimento humano.
+
+Na ativação, a plataforma aloca somente agentes-base já homologados e adequados à oferta. Um candidato gerado por IA nunca recebe versão utilizável antes de avaliação e decisão administrativa. O Pilot Sprint mantém `rapid_mvp_factory` e aciona a fábrica técnica existente sem renomear contratos ou runs históricas.
+
+### Knowledge e RAG
+
+1. Selecione o tenant antes de abrir `/knowledge`.
+2. Crie uma base e ingira somente texto autorizado do cliente.
+3. A indexação persiste documento, chunks, checksum, storage key prefixada e evento no ledger.
+4. A busca híbrida/extrativa é local e tenant-scoped.
+5. Geração pelo LLM exige opt-in explícito no bootstrap; somente os trechos daquele tenant são enviados ao provider.
+6. Consultar um ID conhecido de outro tenant retorna 404/vazio.
+
+Consultas RAG, rejeições e falhas não geram XP.
+
+### Missões e executor suportado
+
+O intake registra prospect, oportunidade, briefing, escopo, proposta, contrato, entitlement e aprovação reais. Runs técnicas diretas são exclusivas dos testes. Em perfis operacionais, a criação de ASF Run passa pelo fluxo contratado e recusa qualquer blueprint sem executor versionado.
+
+Novas runs operacionais usam `software_factory_ai_native_v2` fixado na política v2.13. O executor lê nodes, edges, condições e limites do YAML persistido; cada papel recebe contexto tenant-scoped e produz seu contrato Pydantic específico, normalizado somente após validação. Artifacts e arquivos carregam `model_call_id` e `step_execution_id`; código só entra em `generated_app/`, e atualizações exigem o hash da versão-base. Runs v1, v2.11 e v2.12 permanecem reproduzíveis e consultáveis.
+
+Novas runs também registram `executor_protocol_version=segmented-output-v1`. Temporal congela um plano curto por node e executa uma activity por unidade; artifacts são divididos em até 12 seções e o Engineer em lotes de até quatro arquivos. Cada unidade possui identidade idempotente, heartbeat, limite de tentativas/continuações, hash, trace e vínculo com a model call. A montagem e a transição só ocorrem quando todas as unidades foram confirmadas. Pause/resume operacional e pausa por orçamento aguardam signal; isolamento nunca é repetido automaticamente.
+
+O workflow v2.13 declara budgets, reservas e fontes por node. RAG envia apenas chunks híbridos relevantes; reviewer recebe requisitos/arquitetura/diffs, QA recebe critérios/testes/evidências e o Quality Governor recebe gates/hashes/resumos. Digests por checksum são privados do tenant. Apenas prompts/skills globais estáveis são marcados para cache do provider.
+
+Briefing, escopo, proposta, arquitetura, código, testes e relatórios vêm das respostas reais do modelo. Pricing, entitlement, orçamento, comandos permitidos, sandbox, 17 gates, HRS e aprovação humana permanecem determinísticos. O perfil completo bloqueia novas chamadas em US$ 15 por run e exige evidência de uso real. AFlow continua apenas como referência conceitual e não aparece na interface enquanto não houver motor verificável.
+
+## Interface operacional
+
+A UI está em pt-BR, usa sidebar/drawer responsivo, tema escuro por padrão e tema claro acessível. Áreas principais:
+
+- Command Center multi-tenant com próxima ação, runs, bloqueios, HRS, custo e proveniência.
+- Fábrica, programas, projetos, oportunidades, componentes, MVP runs, runs e batches.
+- Cockpit MetaGPT com papéis/SOPs reais, handoffs, artifacts, gates e grafo derivado do YAML.
+- Aprovações, evidências e entregas em workspace seguro para o revisor.
+- Knowledge/RAG, agentes, atividade de IA, runtime, conectores e learning.
+- Contratos, entitlements, tenants e membros para administradores.
+
+Valores ausentes aparecem como estado vazio ou `—`; nunca são convertidos em créditos, contagens ou histórias inventadas.
+
+## APIs novas
+
+- `GET /api/v1/operator/service-portfolio`
+- `GET /api/v1/operator/work-queue`
+- `GET /api/v1/operator/capacity`
+- `GET /api/v1/client-operations/overview`
+- `GET /api/v1/client-operations/events`
+- `GET /api/v1/service-catalog/offerings`
+- `GET|POST /api/v1/engagements`
+- `GET /api/v1/engagements/{id}`
+- `POST /api/v1/engagements/{id}/plans/generate`
+- `POST /api/v1/engagements/{id}/plans/{version}/approve`
+- `POST /api/v1/engagements/{id}/activate`
+- `GET /api/v1/service-deliverables`
+- `POST /api/v1/service-deliverables/{id}/submit`
+- `POST /api/v1/service-deliverables/{id}/decisions`
+- `POST /api/v1/service-deliverables/{id}/deliver`
+- `GET /api/v1/outcome-metrics`
+- `POST /api/v1/engagements/{id}/outcomes`
+- `POST /api/v1/outcome-metrics/{id}/observations`
+- `GET /api/v1/agent-catalog`
+- `GET|POST /api/v1/agent-gaps`
+- `POST /api/v1/agent-gaps/{id}/generate-candidate`
+- `POST /api/v1/agent-candidates/{id}/evaluate`
+- `POST /api/v1/agent-candidates/{id}/decisions`
+- `POST /api/v1/agent-assignments`
+- `GET /api/v1/operator/portfolio`
+- `GET /api/v1/operator/overview`
+- `GET /runs/{id}/workspace`
+- `GET /runs/{id}/validation-manifest`
+- `GET /runs/{id}/token-analysis`
+- `GET /runs/{id}/execution-units`
+- `GET /runs/{id}/reliability`
+- `GET /api/v1/operator/ai-cost-analysis`
+- `GET /api/v1/operator/slo`
+- `GET /api/v1/admin/platform-readiness`
+- `GET /api/v1/ai-invocations/{id}`
+- `GET /workflows/{id}/topology`
+- `GET /api/v1/review/inbox`
+- `GET /api/v1/review/items/{id}`
+- `POST /api/v1/review/items/{id}/decisions`
+- `GET /api/v1/gamification/profile`
+- `GET /api/v1/gamification/events`
+- `GET /api/v1/component-instances`
+- `GET /api/v1/mvp-runs`
+- `GET /learning/signals`
+- `GET /learning/candidates`
+- `POST /learning/candidates/{id}/evaluate`
+- `POST /learning/candidates/{id}/decisions`
+- `POST /learning/policies/{id}/rollback`
+- `POST /learning/policies/{id}/promote-stage`
+- `POST /learning/cost-policies/proposals`
+- `GET /api/v1/learning/effective-policy`
+- `GET /api/v1/admin/global-learning/policies`
+- `POST /api/v1/admin/global-learning/candidates/{id}/promote`
+- `POST /api/v1/admin/global-learning/policies/{id}/deployments`
+- `POST /api/v1/admin/global-learning/deployments/{id}/rollback`
+
+Os tipos da web são gerados a partir do OpenAPI:
+
+```bash
+cd apps/web
+OPENAPI_URL=http://localhost:8000/openapi.json npm run generate:api
+```
+
+## Gamificação auditável
+
+XP é uma projeção descartável do ledger e não altera HRS, gates, permissões ou decisões humanas.
+
+| Evento | XP |
+|---|---:|
+| `knowledge.document_indexed` | 10 |
+| `ai.mvp.scoped` | 20 |
+| `mvp_run.asf_run_created` | 20 |
+| `quality.gate_passed` | 10 |
+| `homologation.package_created` | 50 |
+| `approval.approved` | 20 |
+| `deliverable.approved_and_delivered` | 100 |
+
+Níveis: Iniciação (0), Operação (100), Orquestração (300), Homologação (700) e Excelência (1.500). A unicidade por tenant, ledger, tipo de evento e beneficiário impede pontuação duplicada.
+
+## Validação
+
+```bash
+cd apps/api && uv run pytest
+cd apps/web && npm run build
+cd apps/web && npm run test:e2e
+docker compose config
+```
+
+O E2E requer a stack OIDC em execução. A validação production-like completa usa:
+
+```bash
 make docker-doctor
 make docker-full-up
 make docker-full-validate
 ```
 
-`make docker-doctor` diferencia problema de Docker de problema de configuração. Ele valida Docker daemon, Compose, socket, container de controle, `kind`, `kubectl`, `OPENROUTER_API_KEY`/`OPENAI_API_KEY` e `ASF_LITELLM_API_KEY`.
+O validador completo cria duas missões distintas, ContractFlow e ServiceDesk, e falha se seus códigos/propostas forem equivalentes, se faltar vínculo modelo→artifact/arquivo, se o custo exceder US$ 15, se algum perfil de sandbox falhar ou se a aplicação não inicializar. Nunca declare homologação final sem essa evidência e uma decisão humana registrada. O estado e os gates restantes estão em [operational-readiness.md](docs/operational-readiness.md).
 
-`make docker-full-up` constrói um container de controle local e, dentro dele, cria ou reutiliza o cluster `kind` chamado `asf-local`, gera `data/kube/asf-local-internal.kubeconfig`, aplica namespace/RBAC/NetworkPolicy/PV/PVC do sandbox, carrega a imagem `asf-sandbox-runner:local` e sobe Docker Compose com Postgres, Redis, Temporal, Temporal UI, MinIO, Keycloak, LiteLLM, API, worker e web.
+O benchmark v2.13 preserva a v2.11 congelada e avalia ContractFlow e ServiceDesk três vezes em cada política, mantendo os mesmos aliases de modelo. A candidata reduz contexto, schemas, saídas ociosas e retries antes de permitir qualquer roteamento adaptativo. Promoção exige redução real mínima de 40% em tokens/custo sem regressão de schema, isolamento, 17 gates, HRS, testes, cobertura, citações, retries, rework ou avaliação cega dos entregáveis. Sem as runs financiadas, a avaliação fica `blocked`; nunca cria um pass sintético. Veja [learning_layer.md](docs/learning_layer.md).
 
-No dev production-like Docker-first, o host só precisa falar com o Docker daemon. Runtime, backend tests, frontend build, Playwright, LLM gateway, OIDC, Temporal, MinIO, sandbox e ferramentas de orquestração rodam em containers.
+A baseline v2.11 é carregada de `benchmarks/workflows/software_factory_ai_native_v2_11.yaml` em bancos novos; ela não depende de uma definição histórica já presente no banco. A v2.13 mantém US$ 15 por missão e reservas decrescentes para as etapas críticas. Um teto menor só pode ser decidido após a baseline real.
 
-Serviços:
+## Documentação
 
-- Web: http://localhost:3000
-- API: http://localhost:8000
-- Health: http://localhost:8000/health
-- Temporal UI: http://localhost:8080
-- Keycloak: http://localhost:8081
-- MinIO Console: http://localhost:9001
-- LiteLLM: http://localhost:4000
-
-Keycloak importa o realm `software-factory`. Usuário local inicial: `operator@local.dev` / `ChangeMe123!`. `make docker-full-validate` obtém um token OIDC real por direct grant e exporta `ASF_TEST_API_BASE_URL`, `ASF_TEST_BEARER_TOKEN` e `ASF_TEST_TENANT_ID` para os testes production-stack.
-
-## Operação Principal
-
-1. Abra http://localhost:3000.
-2. Informe o token OIDC na barra superior.
-3. Descreva a demanda enterprise em linguagem natural.
-4. Escolha template, setor, stack, compliance e integrações.
-5. Clique em `Start Enterprise Build`.
-6. Acompanhe o workspace do run: chat operacional, agentes, handoffs, artifacts, files, tests, quality gates, HRS, sandbox executions, model calls, approval e logs.
-7. Use `Pause`, `Resume`, `Step`, `Approve`, `Request Changes` ou `Reject`.
-8. Envie feedback para criar `HumanFeedback`, `RewardSignal` e `LearningLesson`.
-
-O fluxo de release exige requisitos P0/P1/P2, acceptance criteria, traceability, generated app, pytest inicial falhando, correção, pytest final passando, 17 quality gates, HRS >= 90, pacote de homologação e aprovação humana.
-
-## APIs Principais
-
-- `GET /health`
-- `GET /auth/me`
-- `GET /tenants`, `POST /tenants`
-- `GET /tenants/{tenant_id}/members`, `POST /tenants/{tenant_id}/members`
-- `POST /projects`, `GET /projects`
-- `POST /runs`, `POST /runs/enterprise`, `GET /runs/{run_id}`
-- `GET /runs/{run_id}/stream`
-- `GET /runs/{run_id}/agent-states`
-- `GET /runs/{run_id}/agent-messages`
-- `GET /runs/{run_id}/work-items`
-- `GET /runs/{run_id}/model-calls`
-- `GET /runs/{run_id}/sandbox-executions`
-- `POST /runs/{run_id}/pause`, `resume`, `step`, `approve`, `reject`, `request-changes`, `cancel`
-- `POST /feedback`
-- `POST /batches`, `GET /batches/{batch_id}/items`, `GET /batches/{batch_id}/metrics`
-- `GET /learning/lessons`
-- `GET /model-calls`, `GET /sandbox-executions`, `GET /mcp/tools`
-
-Todas as rotas operacionais, exceto `/health`, exigem JWT OIDC válido e tenant resolvido por `X-Tenant-ID` ou claim `tenant_id`.
-
-## Runtime Production-Only
-
-- Provider: LiteLLM gateway com OpenRouter real por default (`openrouter/openai/gpt-4o-mini`) ou OpenAI direto como alternativa.
-- Workflow: Temporal real com worker separado.
-- Persistência: PostgreSQL; Alembic para migrations.
-- Cache/fanout: Redis disponível na stack.
-- Artifacts: MinIO/S3-compatible.
-- Auth: OIDC/JWKS via Keycloak local ou provedor corporativo.
-- MCP: registry e allowlist por tenant; HTTP/SSE via gateway.
-- Sandbox: Kubernetes Jobs, comando allowlisted, limits, non-root, read-only rootfs, `/tmp` efêmero, sem token de service account e RuntimeClass gVisor/Kata quando disponível.
-
-A API valida essa configuração no startup. Se faltar OIDC, LLM real, Temporal, S3 ou sandbox Kubernetes com PVC, a stack não é homologável.
-
-## Validação De Release
-
-```bash
-make docker-full-up
-curl http://localhost:8000/health
-make docker-full-validate
-```
-
-O validador roda health checks, `GET /auth/me`, backend pytest dentro do container da API, enterprise build real com SSE, generated files, duas execuções de teste/sandbox, HRS >= 90, delivery package, batch real, build Docker do frontend e Playwright em container contra a rede Compose. Depois, via UI:
-
-- login/token OIDC real;
-- `Start Enterprise Build`;
-- timeline SSE com eventos;
-- agentes mudando de estado;
-- generated app criado;
-- sandbox Kubernetes executando `python -m pytest generated_app/tests`;
-- falha inicial e correção;
-- testes finais passando;
-- 17 gates visíveis;
-- HRS >= 90;
-- homologation package criado;
-- approval humana finalizando run;
-- feedback gerando reward/lesson;
-- `POST /batches` criando runs filhos e métricas.
-
-Para derrubar a stack:
-
-```bash
-make docker-full-down
-ASF_DELETE_KIND=1 make docker-full-down
-```
-
-## Deploy Em VPS Com Docker
-
-Para uma VPS genérica, use o Compose de produção:
-
-```bash
-cp .env.vps.example .env.vps
-set -a
-. ./.env.vps
-set +a
-
-make vps-docker-up
-make vps-docker-validate
-```
-
-Esse caminho usa [docker-compose.vps.yml](/Users/arturconrado/fabrica-ia/docker-compose.vps.yml:1): Caddy publica apenas `80/443`, todos os bancos/filas/gateways ficam internos, Keycloak usa Postgres, MinIO cria bucket, API/worker acessam o kubeconfig interno do kind e o sandbox roda como Kubernetes Job. O guia completo está em [docs/vps_docker_production.md](/Users/arturconrado/fabrica-ia/docs/vps_docker_production.md:1).
-
-## Produção Kubernetes
-
-Manifests base ficam em `deploy/k8s` para API, web, worker, RBAC e sandbox NetworkPolicy. Antes de produção:
-
-1. Substitua `deploy/k8s/secret.example.yaml` por secrets reais.
-2. Configure Postgres, Redis, Temporal, object storage, LiteLLM e OIDC gerenciados ou instalados no cluster.
-3. Crie namespace/PVC de sandbox e NetworkPolicy deny-by-default. Em local, isso é automatizado por `deploy/kind/asf-local.yaml` e `deploy/kind/sandbox-workspace-pv.yaml`.
-4. Configure RuntimeClass `gvisor`, `kata` ou equivalente.
-5. Rode migrations Alembic.
-6. Valide tenant isolation, RBAC, MCP allowlist, sandbox e replay/signal Temporal.
-
-## Estado Atual
-
-Implementado neste release: defaults production-only, guard de startup, rotas operacionais sem fallback local, Temporal runner production-named, MCP provider production-named, batch scheduling via Temporal, sandbox Kubernetes obrigatório, automação Docker + kind full-infra com container de controle, Keycloak realm local, UI sem token dev e docs atualizadas.
-
-Limitação restante: a validação real completa depende de chave OpenRouter ou OpenAI, Docker, DNS/TLS válido na VPS e recursos suficientes. Sem esses recursos, os scripts falham cedo em vez de simular sucesso.
+- [Arquitetura](docs/architecture.md)
+- [Segurança e matriz de acesso](docs/security.md)
+- [Runbook dos cinco clientes](docs/operations-runbook.md)
+- [Ledger](docs/event_ledger.md)
+- [Aprendizado curado e benchmark](docs/learning_layer.md)
+- [Checklist de homologação](docs/homologation_checklist.md)
+- [Deploy VPS](docs/vps_docker_production.md)

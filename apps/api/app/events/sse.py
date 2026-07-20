@@ -3,6 +3,7 @@ import json
 
 from sqlalchemy.orm import Session
 
+from app.db.session import set_tenant_context
 from app.models import AgentEvent
 from app.services.serialization import model_to_dict
 
@@ -13,6 +14,7 @@ async def event_stream(db_factory, run_id: str, tenant_id: str):
     while True:
         db: Session = db_factory()
         try:
+            set_tenant_context(db, tenant_id)
             events = (
                 db.query(AgentEvent)
                 .filter(AgentEvent.run_id == run_id, AgentEvent.tenant_id == tenant_id)

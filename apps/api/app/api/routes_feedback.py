@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import Principal, audit, get_current_principal, require_roles
+from app.auth.dependencies import Principal, audit, require_roles
 from app.db.session import get_db
 from app.models import HumanFeedback, WorkflowRun
 from app.schemas import FeedbackCreate
@@ -9,6 +9,7 @@ from app.services.run_service import provider
 from app.services.serialization import model_to_dict, models_to_dict
 
 router = APIRouter(tags=["feedback"])
+get_current_principal = require_roles("owner", "super_admin", "tenant_admin", "engagement_manager", "consultant", "admin", "operator")
 
 
 @router.post("/feedback")

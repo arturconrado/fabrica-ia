@@ -1,5 +1,6 @@
 import uuid
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Callable, Dict, Iterable, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -7,7 +8,21 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
-from app.models import AuditLog, Membership, Role, Tenant, UserAccount
+from app.db.session import set_tenant_context
+from app.models import Membership, Role, Tenant, UserAccount
+
+
+@lru_cache(maxsize=8)
+def _jwks_client(jwks_url: str):
+    """Reuse only the provider's public signing keys across requests.
+
+    PyJWKClient maintains an expiring, thread-safe JWK-set cache, but
+    constructing a new instance for every API request defeats it. No access
+    token, claim, or tenant data is cached.
+    """
+    from jwt import PyJWKClient
+
+    return PyJWKClient(jwks_url, cache_keys=True, cache_jwk_set=True, lifespan=300, timeout=5)
 
 
 @dataclass(frozen=True)
@@ -27,6 +42,7 @@ def _slug(value: str) -> str:
 
 
 def ensure_tenant(db: Session, tenant_id: str, name: str) -> Tenant:
+    set_tenant_context(db, tenant_id)
     tenant = db.get(Tenant, tenant_id)
     if tenant:
         return tenant
@@ -36,11 +52,21 @@ def ensure_tenant(db: Session, tenant_id: str, name: str) -> Tenant:
     tenant = Tenant(id=tenant_id, name=name, slug=slug)
     db.add(tenant)
     db.flush()
+    set_tenant_context(db, tenant_id)
     for role_name, permissions in {
         "owner": ["*"],
-        "admin": ["runs:*", "projects:*", "batches:*", "learning:*", "settings:*"],
-        "operator": ["runs:*", "projects:read", "batches:*", "learning:read"],
-        "viewer": ["runs:read", "projects:read", "batches:read", "learning:read"],
+        "super_admin": ["*"],
+        "tenant_admin": ["programs:*", "contracts:*", "entitlements:*", "components:*", "approvals:*", "knowledge:*", "audit:read"],
+        "engagement_manager": ["programs:*", "components:*", "approvals:*", "knowledge:*", "audit:read"],
+        "consultant": ["programs:read", "components:*", "approvals:*", "knowledge:*", "audit:read"],
+        "client_sponsor": ["programs:read", "components:read", "approvals:*"],
+        "process_owner": ["programs:read", "components:read", "approvals:*"],
+        "reviewer": ["programs:read", "components:read", "approvals:*"],
+        "auditor": ["programs:read", "components:read", "approvals:read", "knowledge:read", "audit:read"],
+        "end_user": ["programs:read", "components:read"],
+        "admin": ["runs:*", "projects:*", "batches:*", "learning:*", "knowledge:*", "settings:*"],
+        "operator": ["runs:*", "projects:read", "batches:*", "learning:read", "knowledge:*"],
+        "viewer": ["runs:read", "projects:read", "batches:read", "learning:read", "knowledge:read"],
     }.items():
         db.add(Role(id=str(uuid.uuid4()), tenant_id=tenant.id, name=role_name, permissions_json=permissions))
     db.flush()
@@ -55,6 +81,7 @@ def ensure_user_membership(
     name: str = "",
     role: str = "owner",
 ) -> tuple[UserAccount, Membership]:
+    set_tenant_context(db, tenant_id)
     user = db.query(UserAccount).filter_by(subject=subject).first()
     if not user:
         user = UserAccount(id=str(uuid.uuid4()), subject=subject, email=email, name=name)
@@ -71,6 +98,27 @@ def ensure_user_membership(
     return user, membership
 
 
+def find_onboarded_user(
+    db: Session,
+    *,
+    subject: str,
+    email: str = "",
+    name: str = "",
+) -> Optional[UserAccount]:
+    """Resolve an identity without granting access to any tenant.
+
+    OIDC authentication proves who the caller is. Tenant access is granted only
+    by an existing Membership created through the onboarding flow.
+    """
+    user = db.query(UserAccount).filter_by(subject=subject).first()
+    if not user:
+        return None
+    user.email = email or user.email
+    user.name = name or user.name
+    db.flush()
+    return user
+
+
 def _verify_oidc_token(token: str, settings: Settings) -> Dict[str, Any]:
     if not settings.oidc_jwks_url:
         raise HTTPException(
@@ -79,12 +127,11 @@ def _verify_oidc_token(token: str, settings: Settings) -> Dict[str, Any]:
         )
     try:
         import jwt
-        from jwt import PyJWKClient
     except Exception as exc:  # pragma: no cover - dependency failure path
         raise HTTPException(status_code=500, detail=f"PyJWT is not installed: {exc}") from exc
 
     try:
-        signing_key = PyJWKClient(settings.oidc_jwks_url).get_signing_key_from_jwt(token)
+        signing_key = _jwks_client(settings.oidc_jwks_url).get_signing_key_from_jwt(token)
         decode_kwargs: Dict[str, Any] = {"algorithms": ["RS256"], "issuer": settings.oidc_issuer_url or None}
         if settings.oidc_audience:
             decode_kwargs["audience"] = settings.oidc_audience
@@ -98,8 +145,6 @@ def _verify_oidc_token(token: str, settings: Settings) -> Dict[str, Any]:
 def _claims_from_request(request: Request, settings: Settings) -> tuple[Dict[str, Any], str]:
     authorization = request.headers.get("authorization", "")
     token = authorization.removeprefix("Bearer ").strip() if authorization.startswith("Bearer ") else ""
-    if not token:
-        token = request.query_params.get("access_token", "")
     if settings.auth_disabled:
         return {
             "sub": "local-dev-user",
@@ -126,20 +171,50 @@ def get_current_principal(
 ) -> Principal:
     settings = get_settings()
     claims, auth_mode = _claims_from_request(request, settings)
-    tenant_id = x_tenant_id or request.query_params.get("tenant_id") or claims.get(settings.oidc_tenant_claim) or settings.default_tenant_id
+    tenant_id = x_tenant_id or claims.get(settings.oidc_tenant_claim) or settings.default_tenant_id
     tenant_name = claims.get("tenant_name") or settings.default_tenant_name
-    ensure_tenant(db, tenant_id, tenant_name)
-    user, membership = ensure_user_membership(
-        db,
-        tenant_id=tenant_id,
-        subject=str(claims.get("sub") or "unknown"),
-        email=str(claims.get("email") or ""),
-        name=str(claims.get("name") or ""),
-        role="owner" if auth_mode in {"disabled", "dev-token"} else "operator",
-    )
+    subject = str(claims.get("sub") or "unknown")
+    email = str(claims.get("email") or "")
+    name = str(claims.get("name") or "")
+
+    if auth_mode in {"disabled", "dev-token"}:
+        if tenant_id != settings.default_tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Local authentication is restricted to the default tenant",
+            )
+        ensure_tenant(db, tenant_id, tenant_name)
+        # RLS is enabled in homologation too. Bind the tenant before looking up
+        # or creating the local membership, otherwise PostgreSQL hides it and a
+        # retry can attempt to create a duplicate membership.
+        set_tenant_context(db, tenant_id)
+        user, membership = ensure_user_membership(
+            db,
+            tenant_id=tenant_id,
+            subject=subject,
+            email=email,
+            name=name,
+            role="owner",
+        )
+    else:
+        user = find_onboarded_user(db, subject=subject, email=email, name=name)
+        if not user:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User onboarding is required")
+        set_tenant_context(db, tenant_id, user.id)
+        tenant = db.get(Tenant, tenant_id)
+        if not tenant or tenant.status != "active":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant access is not provisioned")
+        membership = db.query(Membership).filter_by(tenant_id=tenant_id, user_id=user.id).first()
+        if not membership:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant membership is required")
     if membership.status != "active":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant membership is not active")
-    db.commit()
+    set_tenant_context(db, tenant_id, user.id)
+    # Do not commit here: set_config(..., true) is transaction-local. The
+    # request must keep the same transaction so every downstream query remains
+    # protected by the tenant RLS context.
+    request.state.tenant_id = tenant_id
+    request.state.user_id = user.id
     return Principal(
         tenant_id=tenant_id,
         user_id=user.id,
@@ -171,16 +246,17 @@ def audit(
     resource_id: str = "",
     metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
-    db.add(
-        AuditLog(
-            id=str(uuid.uuid4()),
-            tenant_id=principal.tenant_id,
-            actor_user_id=principal.user_id,
-            action=action,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            metadata_json=metadata or {},
-        )
+    from app.service_delivery.ledger import append_ledger_event
+
+    append_ledger_event(
+        db,
+        tenant_id=principal.tenant_id,
+        aggregate_type=resource_type or "audit",
+        aggregate_id=resource_id or principal.tenant_id,
+        event_type=action,
+        actor_user_id=principal.user_id,
+        correlation_id=str((metadata or {}).get("correlation_id") or ""),
+        payload=metadata or {},
     )
 
 

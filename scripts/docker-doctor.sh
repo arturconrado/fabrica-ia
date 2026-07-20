@@ -78,6 +78,12 @@ main() {
     fail "ASF_LITELLM_API_KEY is missing in environment/.env" || failures=$((failures + 1))
   fi
 
+  if [ -n "${ASF_ENCRYPTION_KEY:-}" ]; then
+    ok "ASF_ENCRYPTION_KEY is configured"
+  else
+    fail "ASF_ENCRYPTION_KEY is missing in environment/.env" || failures=$((failures + 1))
+  fi
+
   if "$REPO_ROOT/scripts/docker-control.sh" 'docker info >/dev/null && kind version >/dev/null && kubectl version --client=true >/dev/null && docker compose version >/dev/null'; then
     ok "Docker control container can reach Docker, kind, kubectl and Compose"
   else

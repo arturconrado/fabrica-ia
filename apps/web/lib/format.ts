@@ -3,6 +3,6 @@ export function shortId(id?: string) {
 }
 
 export function fmtDate(value?: string) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString();
+  if (!value) return "—";
+  return new Date(value).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Sao_Paulo" });
 }

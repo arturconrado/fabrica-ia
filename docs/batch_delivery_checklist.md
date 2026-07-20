@@ -1,29 +1,15 @@
 # Batch Delivery Checklist
 
 ## Production Batch
-- [x] Public creation endpoint is `POST /batches`.
-- [x] Public legacy batch endpoint removed.
-- [x] Batch requires authenticated operator/admin/owner.
-- [x] Batch and items are tenant-scoped.
-- [x] Batch creates enterprise portfolio items.
-- [x] Each item creates a child `WorkflowRun`.
-- [x] Each child run is scheduled through Temporal.
-- [x] Temporal workflow ids are persisted on child runs.
-- [x] Initial batch metric `scheduled_runs` is persisted.
-- [x] Batch UI starts through `/batches`.
-- [x] Batch item and metric list endpoints remain tenant-scoped.
+- [x] Hard-coded `POST /batches` is rejected in production.
+- [x] `POST /api/v1/prospect-batches` requires an authenticated tenant operator and creates tenant-scoped intake records.
+- [x] Individual promotion still requires proposal approval, contract, entitlement and a supported blueprint.
+- [ ] Versioned execution-batch blueprint is not enabled for the assisted pilot.
 
 ## Required Release Validation
 - [ ] `make docker-full-up` starts the full Docker + kind stack before batch validation.
 - [ ] `make vps-docker-up` starts the VPS production Docker stack before external batch validation.
-- [ ] Parent batch workflow orchestration validated in Temporal target environment.
-- [ ] Child workflow completion updates item status and HRS.
-- [ ] Item approval signals validated through Temporal.
-- [ ] Batch metrics validated after all child runs finish.
-- [ ] Batch UI links open child run workspaces.
-- [ ] Batch tenant isolation negative test passes.
-- [ ] Concurrent batch scheduling tested with production Postgres/Temporal.
-- [ ] `make docker-full-validate` confirms `POST /batches`, 3 child items and metrics against the real local stack.
-- [ ] `make vps-docker-validate` confirms `POST /batches`, 3 child items and metrics through the public API domain.
+- [ ] Prospect batch tenant isolation negative test passes on PostgreSQL RLS.
+- [ ] A future execution batch proves parent orchestration, child completion, fair capacity and metrics in Temporal.
 
-Last update: VPS Docker production deployment path.
+Last update: assisted-pilot safety cut; hard-coded execution batches disabled in production.

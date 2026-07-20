@@ -16,3 +16,5 @@ Core rules:
 11. If blocked, emit agent.blocked.
 12. Do not claim tests passed unless test evidence exists.
 13. Do not approve homologation without evidence.
+14. Do not generate seed, demo, sample or mock business data for operational builds. Deterministic fixtures are allowed only inside isolated tests.
+15. Keep the complete JSON response below 12,000 tokens and each artifact below 40,000 characters. Prefer concise, executable specifications over repetition.

@@ -7,28 +7,6 @@ import type { Dict } from "@/lib/types";
 import { fmtDate } from "@/lib/format";
 import { StatusBadge, statusClass } from "@/lib/status";
 
-const orderedAgents = [
-  "Demand Classifier",
-  "Acceptance Criteria Architect",
-  "Scope Governor",
-  "Product Manager",
-  "UX UI Designer",
-  "Architect",
-  "Data Architect",
-  "API Contract Engineer",
-  "Project Manager",
-  "Engineer",
-  "Code Reviewer",
-  "QA Engineer",
-  "Visual QA Agent",
-  "Accessibility QA Agent",
-  "Security Engineer",
-  "DevOps Engineer",
-  "Release Manager",
-  "Quality Governor",
-  "Human Approval"
-];
-
 export function FactoryFloor({
   run,
   agentStates,
@@ -46,7 +24,7 @@ export function FactoryFloor({
 }) {
   const states = useMemo(() => {
     const byName = new Map(agentStates.map((state) => [state.agent_name, state]));
-    return orderedAgents.map((name) => byName.get(name) || { agent_name: name, role: name, status: "queued", progress: 0, current_sop_step: "queued", tools_json: [] });
+    return Array.from(byName.values());
   }, [agentStates]);
   const active = states.find((state) => state.status === "working") || states.find((state) => state.agent_name === run.current_node) || states[0];
   const [selectedName, setSelectedName] = useState("");

@@ -4,13 +4,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProjectCreate(BaseModel):
-    name: str = "ContractFlow Enterprise"
+    name: str = Field(min_length=1, max_length=160)
     description: str = ""
 
 
 class TenantCreate(BaseModel):
     id: Optional[str] = None
-    name: str = "Production Tenant"
+    name: str = Field(min_length=1, max_length=160)
 
 
 class MemberCreate(BaseModel):
@@ -34,15 +34,13 @@ class McpToolCallCreate(BaseModel):
 
 
 class RunCreate(BaseModel):
-    demand: str = Field(default="Crie um sistema para gestão de clientes, contratos e faturas.")
-    project_id: Optional[str] = None
+    demand: str = Field(min_length=10, max_length=20_000)
+    project_id: str = Field(min_length=1)
 
 
 class EnterpriseRunCreate(BaseModel):
-    prompt: str = Field(
-        default="Crie um portal enterprise para contratos, aprovações, SLA e auditoria."
-    )
-    project_name: str = "Enterprise Software Factory Build"
+    prompt: str = Field(min_length=10, max_length=20_000)
+    project_name: str = Field(min_length=1, max_length=160)
     template: str = "enterprise-saas"
     industry: str = "financial_services"
     quality_profile: str = "regulated_enterprise"
@@ -56,7 +54,7 @@ class FeedbackCreate(BaseModel):
     event_id: str = ""
     artifact_id: str = ""
     node_id: str = ""
-    rating: int = 1
+    rating: int = Field(default=0, ge=-1, le=1)
     comment: str = ""
     feedback_type: str = "general"
     labels: List[str] = Field(default_factory=list)
@@ -64,6 +62,16 @@ class FeedbackCreate(BaseModel):
 
 class HumanDecision(BaseModel):
     comment: str = ""
+
+
+class BatchRunItemCreate(BaseModel):
+    project_id: str = Field(min_length=1)
+    demand: str = Field(min_length=10, max_length=20_000)
+
+
+class BatchCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    items: List[BatchRunItemCreate] = Field(min_length=1, max_length=10)
 
 
 class ORMModel(BaseModel):

@@ -8,6 +8,7 @@
 __pycache__/
 .pytest_cache/
 *.pyc
+*.egg-info/
 apps/api/test-data/
 apps/api/data/
 test-data/

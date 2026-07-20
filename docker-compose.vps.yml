@@ -7,7 +7,6 @@ services:
       ASF_API_DOMAIN: ${ASF_API_DOMAIN:?Set ASF_API_DOMAIN}
       ASF_AUTH_DOMAIN: ${ASF_AUTH_DOMAIN:?Set ASF_AUTH_DOMAIN}
       ASF_MINIO_DOMAIN: ${ASF_MINIO_DOMAIN:?Set ASF_MINIO_DOMAIN}
-      ASF_TEMPORAL_DOMAIN: ${ASF_TEMPORAL_DOMAIN:?Set ASF_TEMPORAL_DOMAIN}
       ASF_TLS_EMAIL: ${ASF_TLS_EMAIL:?Set ASF_TLS_EMAIL}
     ports:
       - "80:80"
@@ -22,7 +21,6 @@ services:
       - api
       - keycloak
       - minio
-      - temporal-ui
 
   postgres:
     image: postgres:16-alpine
@@ -151,20 +149,266 @@ services:
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
     restart: unless-stopped
-    command: ["--host", "0.0.0.0", "--port", "4000"]
+    command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000"]
     environment:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ASF_FAST_UPSTREAM_MODEL: ${ASF_FAST_UPSTREAM_MODEL:-openrouter/google/gemini-3.1-flash-lite}
+      ASF_REASONING_UPSTREAM_MODEL: ${ASF_REASONING_UPSTREAM_MODEL:-openrouter/anthropic/claude-sonnet-4.6}
+      ASF_CODE_UPSTREAM_MODEL: ${ASF_CODE_UPSTREAM_MODEL:-openrouter/anthropic/claude-sonnet-4.6}
       LITELLM_MASTER_KEY: ${ASF_LITELLM_API_KEY:?Set ASF_LITELLM_API_KEY}
+    volumes:
+      - ./deploy/litellm/config.yaml:/app/config.yaml:ro
+
+  migrate:
+    build:
+      context: ./apps/api
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://factory:${ASF_POSTGRES_PASSWORD:?Set ASF_POSTGRES_PASSWORD}@postgres:5432/factory
+      ASF_DATABASE_URL: postgresql+psycopg://factory:${ASF_POSTGRES_PASSWORD:?Set ASF_POSTGRES_PASSWORD}@postgres:5432/factory
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  db-role-init:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGUSER: factory
+      PGPASSWORD: ${ASF_POSTGRES_PASSWORD:?Set ASF_POSTGRES_PASSWORD}
+      PGDATABASE: factory
+      ASF_POSTGRES_APP_PASSWORD: ${ASF_POSTGRES_APP_PASSWORD:?Set ASF_POSTGRES_APP_PASSWORD}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        psql -v ON_ERROR_STOP=1 --set=app_password="$$ASF_POSTGRES_APP_PASSWORD" <<'SQL'
+        SELECT format('CREATE ROLE factory_app LOGIN PASSWORD %L', :'app_password')
+        WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'factory_app') \gexec
+        SELECT format('ALTER ROLE factory_app LOGIN PASSWORD %L NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT', :'app_password') \gexec
+        GRANT CONNECT ON DATABASE factory TO factory_app;
+        GRANT USAGE ON SCHEMA public TO factory_app;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO factory_app;
+        GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO factory_app;
+        ALTER DEFAULT PRIVILEGES FOR ROLE factory IN SCHEMA public
+          GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO factory_app;
+        ALTER DEFAULT PRIVILEGES FOR ROLE factory IN SCHEMA public
+          GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO factory_app;
+        GRANT EXECUTE ON FUNCTION public.asf_aggregate_technical_metrics() TO factory_app;
+        SQL
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  postgres-backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGUSER: factory
+      PGPASSWORD: ${ASF_POSTGRES_PASSWORD:?Set ASF_POSTGRES_PASSWORD}
+      PGDATABASE: factory
+      ASF_BACKUP_RETENTION_DAYS: ${ASF_BACKUP_RETENTION_DAYS:-7}
+      ASF_BACKUP_NAME: factory
+    volumes:
+      - ./data/backups:/backups
+      - ./scripts/backup-postgres.sh:/usr/local/bin/backup-postgres:ro
+      - ./scripts/restore-postgres.sh:/usr/local/bin/restore-postgres:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["while true; do /usr/local/bin/backup-postgres; sleep 86400; done"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  temporal-postgres-backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGHOST: temporal-postgres
+      PGUSER: temporal
+      PGPASSWORD: ${ASF_TEMPORAL_POSTGRES_PASSWORD:?Set ASF_TEMPORAL_POSTGRES_PASSWORD}
+      PGDATABASE: temporal
+      ASF_BACKUP_DIR: /backups/temporal
+      ASF_BACKUP_NAME: temporal
+      ASF_BACKUP_RETENTION_DAYS: ${ASF_BACKUP_RETENTION_DAYS:-7}
+    volumes:
+      - ./data/backups:/backups
+      - ./scripts/backup-postgres.sh:/usr/local/bin/backup-postgres:ro
+      - ./scripts/restore-postgres.sh:/usr/local/bin/restore-postgres:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["while true; do /usr/local/bin/backup-postgres; sleep 86400; done"]
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+
+  keycloak-postgres-backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGHOST: keycloak-postgres
+      PGUSER: keycloak
+      PGPASSWORD: ${ASF_KEYCLOAK_DB_PASSWORD:?Set ASF_KEYCLOAK_DB_PASSWORD}
+      PGDATABASE: keycloak
+      ASF_BACKUP_DIR: /backups/keycloak
+      ASF_BACKUP_NAME: keycloak
+      ASF_BACKUP_RETENTION_DAYS: ${ASF_BACKUP_RETENTION_DAYS:-7}
+    volumes:
+      - ./data/backups:/backups
+      - ./scripts/backup-postgres.sh:/usr/local/bin/backup-postgres:ro
+      - ./scripts/restore-postgres.sh:/usr/local/bin/restore-postgres:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["while true; do /usr/local/bin/backup-postgres; sleep 86400; done"]
+    depends_on:
+      keycloak-postgres:
+        condition: service_healthy
+
+  filesystem-backup:
+    image: alpine:3.21
+    restart: unless-stopped
+    environment:
+      ASF_BACKUP_RETENTION_DAYS: ${ASF_BACKUP_RETENTION_DAYS:-7}
+    volumes:
+      - ./data/api:/source/api:ro
+      - ./data/backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          stamp="$$(date -u +%Y%m%dT%H%M%SZ)";
+          target="/backups/filesystem/api-$$stamp.tar.gz";
+          mkdir -p /backups/filesystem;
+          tar -czf "$$target.partial" -C /source api;
+          tar -tzf "$$target.partial" >/dev/null;
+          mv "$$target.partial" "$$target";
+          sha256sum "$$target" > "$$target.sha256";
+          find /backups/filesystem -type f -mtime "+$$ASF_BACKUP_RETENTION_DAYS" -delete;
+          sleep 86400;
+        done
+
+  minio-backup:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${ASF_MINIO_ROOT_USER:?Set ASF_MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${ASF_MINIO_ROOT_PASSWORD:?Set ASF_MINIO_ROOT_PASSWORD}
+      ASF_BACKUP_RETENTION_DAYS: ${ASF_BACKUP_RETENTION_DAYS:-7}
+    volumes:
+      - ./data/backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until mc alias set source http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"; do sleep 2; done;
+        while true; do
+          stamp="$$(date -u +%Y%m%dT%H%M%SZ)";
+          target="/backups/minio/$$stamp";
+          mkdir -p "$$target";
+          mc mirror --overwrite source/software-factory-artifacts "$$target/software-factory-artifacts";
+          find "$$target" -type f ! -name SHA256SUMS -exec sha256sum {} \; > "$$target/SHA256SUMS";
+          find /backups/minio -mindepth 1 -maxdepth 1 -type d -mtime "+$$ASF_BACKUP_RETENTION_DAYS" -exec rm -rf {} +;
+          sleep 86400;
+        done
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+
+  backup-offsite:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    restart: unless-stopped
+    environment:
+      ASF_BACKUP_REMOTE_ENDPOINT: ${ASF_BACKUP_REMOTE_ENDPOINT:?Set ASF_BACKUP_REMOTE_ENDPOINT}
+      ASF_BACKUP_REMOTE_ACCESS_KEY: ${ASF_BACKUP_REMOTE_ACCESS_KEY:?Set ASF_BACKUP_REMOTE_ACCESS_KEY}
+      ASF_BACKUP_REMOTE_SECRET_KEY: ${ASF_BACKUP_REMOTE_SECRET_KEY:?Set ASF_BACKUP_REMOTE_SECRET_KEY}
+      ASF_BACKUP_REMOTE_BUCKET: ${ASF_BACKUP_REMOTE_BUCKET:?Set ASF_BACKUP_REMOTE_BUCKET}
+      ASF_BACKUP_REMOTE_PREFIX: ${ASF_BACKUP_REMOTE_PREFIX:-production}
+    volumes:
+      - ./data/backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu;
+        until mc alias set remote "$$ASF_BACKUP_REMOTE_ENDPOINT" "$$ASF_BACKUP_REMOTE_ACCESS_KEY" "$$ASF_BACKUP_REMOTE_SECRET_KEY"; do sleep 5; done;
+        mc mb --ignore-existing "remote/$$ASF_BACKUP_REMOTE_BUCKET";
+        while true; do
+          if ! find /backups -maxdepth 1 -name 'factory-*.dump' -type f | grep -q . \
+            || ! find /backups/temporal -name 'temporal-*.dump' -type f | grep -q . \
+            || ! find /backups/keycloak -name 'keycloak-*.dump' -type f | grep -q . \
+            || ! find /backups/filesystem -name 'api-*.tar.gz' -type f | grep -q . \
+            || ! find /backups/minio -name SHA256SUMS -type f | grep -q .; then
+            sleep 30;
+            continue;
+          fi;
+          mc mirror --overwrite /backups "remote/$$ASF_BACKUP_REMOTE_BUCKET/$$ASF_BACKUP_REMOTE_PREFIX";
+          date -u +%Y-%m-%dT%H:%M:%SZ > /backups/.offsite-last-success;
+          sleep 300;
+        done
+    depends_on:
+      postgres-backup:
+        condition: service_started
+      temporal-postgres-backup:
+        condition: service_started
+      keycloak-postgres-backup:
+        condition: service_started
+      filesystem-backup:
+        condition: service_started
+      minio-backup:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "test -n \"$$(find /backups/.offsite-last-success -mmin -10 -print 2>/dev/null)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    restart: unless-stopped
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager"]
+    volumes:
+      - ./data/observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./data/alertmanager:/alertmanager
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./data/prometheus:/prometheus
+    depends_on:
+      api:
+        condition: service_healthy
+      alertmanager:
+        condition: service_started
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yml"]
+    volumes:
+      - ./deploy/observability/tempo.yml:/etc/tempo.yml:ro
+      - ./data/tempo:/var/tempo
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector.yml"]
+    volumes:
+      - ./deploy/observability/otel-collector.yml:/etc/otel-collector.yml:ro
+    depends_on:
+      tempo:
+        condition: service_started
 
   api:
     build:
       context: ./apps/api
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+psycopg://factory:${ASF_POSTGRES_PASSWORD:?Set ASF_POSTGRES_PASSWORD}@postgres:5432/factory
-      ASF_DATABASE_URL: postgresql+psycopg://factory:${ASF_POSTGRES_PASSWORD:?Set ASF_POSTGRES_PASSWORD}@postgres:5432/factory
+      DATABASE_URL: postgresql+psycopg://factory_app:${ASF_POSTGRES_APP_PASSWORD:?Set ASF_POSTGRES_APP_PASSWORD}@postgres:5432/factory
+      ASF_DATABASE_URL: postgresql+psycopg://factory_app:${ASF_POSTGRES_APP_PASSWORD:?Set ASF_POSTGRES_APP_PASSWORD}@postgres:5432/factory
       ASF_ENVIRONMENT: production
+      ASF_RUNTIME_PROFILE: production
       ASF_DATA_DIR: /data
       ASF_CORS_ORIGINS: https://${ASF_PUBLIC_DOMAIN:?Set ASF_PUBLIC_DOMAIN}
       ASF_DEFAULT_TENANT_ID: ${ASF_DEFAULT_TENANT_ID:-production}
@@ -181,6 +425,36 @@ services:
       ASF_LITELLM_BASE_URL: http://litellm:4000
       ASF_LITELLM_API_KEY: ${ASF_LITELLM_API_KEY:?Set ASF_LITELLM_API_KEY}
       ASF_MCP_ENABLED: "true"
+      ASF_GENERATIVE_BUILD_ENABLED: "true"
+      ASF_SERVICE_DELIVERY_OS_ENABLED: "true"
+      ASF_SERVICE_WIP_GLOBAL_LIMIT: ${ASF_SERVICE_WIP_GLOBAL_LIMIT:-5}
+      ASF_SERVICE_WIP_PER_TENANT_LIMIT: ${ASF_SERVICE_WIP_PER_TENANT_LIMIT:-2}
+      ASF_AGENT_CANDIDATE_EVALUATION_REPETITIONS: ${ASF_AGENT_CANDIDATE_EVALUATION_REPETITIONS:-3}
+      ASF_FAST_MODEL: ${ASF_FAST_MODEL:-asf-fast}
+      ASF_REASONING_MODEL: ${ASF_REASONING_MODEL:-asf-reasoning}
+      ASF_CODE_MODEL: ${ASF_CODE_MODEL:-asf-code}
+      ASF_FAST_MODEL_REQUEST_TIMEOUT_SECONDS: ${ASF_FAST_MODEL_REQUEST_TIMEOUT_SECONDS:-90}
+      ASF_REASONING_MODEL_REQUEST_TIMEOUT_SECONDS: ${ASF_REASONING_MODEL_REQUEST_TIMEOUT_SECONDS:-240}
+      ASF_CODE_MODEL_REQUEST_TIMEOUT_SECONDS: ${ASF_CODE_MODEL_REQUEST_TIMEOUT_SECONDS:-360}
+      ASF_FAST_MODEL_MAX_OUTPUT_TOKENS: ${ASF_FAST_MODEL_MAX_OUTPUT_TOKENS:-4000}
+      ASF_REASONING_MODEL_MAX_OUTPUT_TOKENS: ${ASF_REASONING_MODEL_MAX_OUTPUT_TOKENS:-16000}
+      ASF_CODE_MODEL_MAX_OUTPUT_TOKENS: ${ASF_CODE_MODEL_MAX_OUTPUT_TOKENS:-32000}
+      ASF_AGENT_RETRY_BACKOFF_SECONDS: ${ASF_AGENT_RETRY_BACKOFF_SECONDS:-6}
+      ASF_MODEL_MONTHLY_BUDGET_USD: ${ASF_MODEL_MONTHLY_BUDGET_USD:-250}
+      ASF_MODEL_RUN_BUDGET_USD: ${ASF_MODEL_RUN_BUDGET_USD:-15}
+      ASF_MODEL_COMMERCIAL_OPERATION_BUDGET_USD: ${ASF_MODEL_COMMERCIAL_OPERATION_BUDGET_USD:-2}
+      ASF_MODEL_ENGAGEMENT_PLAN_BUDGET_USD: ${ASF_MODEL_ENGAGEMENT_PLAN_BUDGET_USD:-2}
+      ASF_MODEL_SERVICE_DELIVERABLE_BUDGET_USD: ${ASF_MODEL_SERVICE_DELIVERABLE_BUDGET_USD:-3}
+      ASF_MODEL_RAG_ANSWER_BUDGET_USD: ${ASF_MODEL_RAG_ANSWER_BUDGET_USD:-0.5}
+      ASF_MODEL_AGENT_CANDIDATE_BUDGET_USD: ${ASF_MODEL_AGENT_CANDIDATE_BUDGET_USD:-2}
+      ASF_MODEL_AGENT_EVALUATION_BUDGET_USD: ${ASF_MODEL_AGENT_EVALUATION_BUDGET_USD:-2}
+      ASF_SANDBOX_ALLOWED_COMMANDS: 'python -m pytest generated_app/backend/tests||python -c "from generated_app.backend.app.main import app; assert app"||npm --prefix generated_app/frontend run test||npm --prefix generated_app/frontend run build||npm --prefix generated_app/frontend run test:visual||npm --prefix generated_app/frontend run test:a11y||bandit -q -r generated_app/backend -f json'
+      ASF_OBSERVABILITY_ENABLED: "true"
+      ASF_OTEL_SERVICE_NAME: agentic-software-factory-api
+      ASF_OTEL_EXPORTER_OTLP_ENDPOINT: ${ASF_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318/v1/traces}
+      ASF_OTEL_EXPORTER_OTLP_HEADERS: ${ASF_OTEL_EXPORTER_OTLP_HEADERS:-}
+      ASF_BACKUP_DIR: /backups
+      ASF_ENCRYPTION_KEY: ${ASF_ENCRYPTION_KEY:?Set ASF_ENCRYPTION_KEY}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ASF_SANDBOX_BACKEND: kubernetes
@@ -193,15 +467,30 @@ services:
       ASF_S3_BUCKET: software-factory-artifacts
       ASF_S3_ACCESS_KEY_ID: ${ASF_MINIO_ROOT_USER:?Set ASF_MINIO_ROOT_USER}
       ASF_S3_SECRET_ACCESS_KEY: ${ASF_MINIO_ROOT_PASSWORD:?Set ASF_MINIO_ROOT_PASSWORD}
+      ASF_PILOT_MAX_CONCURRENT_WORKFLOWS: ${ASF_PILOT_MAX_CONCURRENT_WORKFLOWS:-10}
+      ASF_PILOT_MAX_CONCURRENT_WORKFLOWS_PER_TENANT: ${ASF_PILOT_MAX_CONCURRENT_WORKFLOWS_PER_TENANT:-2}
+      ASF_KNOWLEDGE_MAX_BASES_PER_TENANT: ${ASF_KNOWLEDGE_MAX_BASES_PER_TENANT:-10}
+      ASF_KNOWLEDGE_MAX_DOCUMENTS_PER_TENANT: ${ASF_KNOWLEDGE_MAX_DOCUMENTS_PER_TENANT:-250}
+      ASF_KNOWLEDGE_MAX_DOCUMENT_CHARS: ${ASF_KNOWLEDGE_MAX_DOCUMENT_CHARS:-250000}
+      ASF_KNOWLEDGE_MAX_TOTAL_CHARS_PER_TENANT: ${ASF_KNOWLEDGE_MAX_TOTAL_CHARS_PER_TENANT:-5000000}
+      ASF_KNOWLEDGE_CHUNK_CHARS: ${ASF_KNOWLEDGE_CHUNK_CHARS:-1200}
+      ASF_KNOWLEDGE_CHUNK_OVERLAP_CHARS: ${ASF_KNOWLEDGE_CHUNK_OVERLAP_CHARS:-180}
+      ASF_KNOWLEDGE_MAX_QUERY_RESULTS: ${ASF_KNOWLEDGE_MAX_QUERY_RESULTS:-8}
     volumes:
       - ./data/api:/data
+      - ./data/backups:/backups:ro
       - ${ASF_DOCKER_KUBECONFIG:-./data/kube/asf-vps-internal.kubeconfig}:/kube/config:ro
       - ./workflows:/app/workflows:ro
+      - ./benchmarks:/app/benchmarks:ro
       - ./skills:/app/skills:ro
       - ./prompts:/app/prompts:ro
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      db-role-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       temporal:
@@ -211,6 +500,8 @@ services:
       keycloak:
         condition: service_started
       litellm:
+        condition: service_started
+      otel-collector:
         condition: service_started
     networks:
       - default
@@ -227,9 +518,10 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "app.worker"]
     environment:
-      DATABASE_URL: postgresql+psycopg://factory:${ASF_POSTGRES_PASSWORD:?Set ASF_POSTGRES_PASSWORD}@postgres:5432/factory
-      ASF_DATABASE_URL: postgresql+psycopg://factory:${ASF_POSTGRES_PASSWORD:?Set ASF_POSTGRES_PASSWORD}@postgres:5432/factory
+      DATABASE_URL: postgresql+psycopg://factory_app:${ASF_POSTGRES_APP_PASSWORD:?Set ASF_POSTGRES_APP_PASSWORD}@postgres:5432/factory
+      ASF_DATABASE_URL: postgresql+psycopg://factory_app:${ASF_POSTGRES_APP_PASSWORD:?Set ASF_POSTGRES_APP_PASSWORD}@postgres:5432/factory
       ASF_ENVIRONMENT: production
+      ASF_RUNTIME_PROFILE: production
       ASF_DATA_DIR: /data
       ASF_DEFAULT_TENANT_ID: ${ASF_DEFAULT_TENANT_ID:-production}
       ASF_AUTH_DISABLED: "false"
@@ -244,6 +536,35 @@ services:
       ASF_LITELLM_BASE_URL: http://litellm:4000
       ASF_LITELLM_API_KEY: ${ASF_LITELLM_API_KEY:?Set ASF_LITELLM_API_KEY}
       ASF_MCP_ENABLED: "true"
+      ASF_GENERATIVE_BUILD_ENABLED: "true"
+      ASF_SERVICE_DELIVERY_OS_ENABLED: "true"
+      ASF_SERVICE_WIP_GLOBAL_LIMIT: ${ASF_SERVICE_WIP_GLOBAL_LIMIT:-5}
+      ASF_SERVICE_WIP_PER_TENANT_LIMIT: ${ASF_SERVICE_WIP_PER_TENANT_LIMIT:-2}
+      ASF_AGENT_CANDIDATE_EVALUATION_REPETITIONS: ${ASF_AGENT_CANDIDATE_EVALUATION_REPETITIONS:-3}
+      ASF_FAST_MODEL: ${ASF_FAST_MODEL:-asf-fast}
+      ASF_REASONING_MODEL: ${ASF_REASONING_MODEL:-asf-reasoning}
+      ASF_CODE_MODEL: ${ASF_CODE_MODEL:-asf-code}
+      ASF_FAST_MODEL_REQUEST_TIMEOUT_SECONDS: ${ASF_FAST_MODEL_REQUEST_TIMEOUT_SECONDS:-90}
+      ASF_REASONING_MODEL_REQUEST_TIMEOUT_SECONDS: ${ASF_REASONING_MODEL_REQUEST_TIMEOUT_SECONDS:-240}
+      ASF_CODE_MODEL_REQUEST_TIMEOUT_SECONDS: ${ASF_CODE_MODEL_REQUEST_TIMEOUT_SECONDS:-360}
+      ASF_FAST_MODEL_MAX_OUTPUT_TOKENS: ${ASF_FAST_MODEL_MAX_OUTPUT_TOKENS:-4000}
+      ASF_REASONING_MODEL_MAX_OUTPUT_TOKENS: ${ASF_REASONING_MODEL_MAX_OUTPUT_TOKENS:-16000}
+      ASF_CODE_MODEL_MAX_OUTPUT_TOKENS: ${ASF_CODE_MODEL_MAX_OUTPUT_TOKENS:-32000}
+      ASF_AGENT_RETRY_BACKOFF_SECONDS: ${ASF_AGENT_RETRY_BACKOFF_SECONDS:-6}
+      ASF_MODEL_MONTHLY_BUDGET_USD: ${ASF_MODEL_MONTHLY_BUDGET_USD:-250}
+      ASF_MODEL_RUN_BUDGET_USD: ${ASF_MODEL_RUN_BUDGET_USD:-15}
+      ASF_MODEL_COMMERCIAL_OPERATION_BUDGET_USD: ${ASF_MODEL_COMMERCIAL_OPERATION_BUDGET_USD:-2}
+      ASF_MODEL_ENGAGEMENT_PLAN_BUDGET_USD: ${ASF_MODEL_ENGAGEMENT_PLAN_BUDGET_USD:-2}
+      ASF_MODEL_SERVICE_DELIVERABLE_BUDGET_USD: ${ASF_MODEL_SERVICE_DELIVERABLE_BUDGET_USD:-3}
+      ASF_MODEL_RAG_ANSWER_BUDGET_USD: ${ASF_MODEL_RAG_ANSWER_BUDGET_USD:-0.5}
+      ASF_MODEL_AGENT_CANDIDATE_BUDGET_USD: ${ASF_MODEL_AGENT_CANDIDATE_BUDGET_USD:-2}
+      ASF_MODEL_AGENT_EVALUATION_BUDGET_USD: ${ASF_MODEL_AGENT_EVALUATION_BUDGET_USD:-2}
+      ASF_SANDBOX_ALLOWED_COMMANDS: 'python -m pytest generated_app/backend/tests||python -c "from generated_app.backend.app.main import app; assert app"||npm --prefix generated_app/frontend run test||npm --prefix generated_app/frontend run build||npm --prefix generated_app/frontend run test:visual||npm --prefix generated_app/frontend run test:a11y||bandit -q -r generated_app/backend -f json'
+      ASF_OBSERVABILITY_ENABLED: "true"
+      ASF_OTEL_SERVICE_NAME: agentic-software-factory-worker
+      ASF_OTEL_EXPORTER_OTLP_ENDPOINT: ${ASF_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318/v1/traces}
+      ASF_OTEL_EXPORTER_OTLP_HEADERS: ${ASF_OTEL_EXPORTER_OTLP_HEADERS:-}
+      ASF_ENCRYPTION_KEY: ${ASF_ENCRYPTION_KEY:?Set ASF_ENCRYPTION_KEY}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ASF_SANDBOX_BACKEND: kubernetes
@@ -252,16 +573,32 @@ services:
       ASF_SANDBOX_WORKSPACE_MOUNT_PATH: /workspace
       ASF_SANDBOX_RUNTIME_CLASS: ${ASF_SANDBOX_RUNTIME_CLASS:-}
       ASF_SANDBOX_IMAGE: ${ASF_SANDBOX_IMAGE:-asf-sandbox-runner:local}
+      ASF_S3_ENDPOINT_URL: http://minio:9000
+      ASF_S3_BUCKET: software-factory-artifacts
+      ASF_S3_ACCESS_KEY_ID: ${ASF_MINIO_ROOT_USER:?Set ASF_MINIO_ROOT_USER}
+      ASF_S3_SECRET_ACCESS_KEY: ${ASF_MINIO_ROOT_PASSWORD:?Set ASF_MINIO_ROOT_PASSWORD}
+      ASF_PILOT_MAX_CONCURRENT_WORKFLOWS: ${ASF_PILOT_MAX_CONCURRENT_WORKFLOWS:-10}
+      ASF_PILOT_MAX_CONCURRENT_WORKFLOWS_PER_TENANT: ${ASF_PILOT_MAX_CONCURRENT_WORKFLOWS_PER_TENANT:-2}
+      ASF_KNOWLEDGE_MAX_BASES_PER_TENANT: ${ASF_KNOWLEDGE_MAX_BASES_PER_TENANT:-10}
+      ASF_KNOWLEDGE_MAX_DOCUMENTS_PER_TENANT: ${ASF_KNOWLEDGE_MAX_DOCUMENTS_PER_TENANT:-250}
+      ASF_KNOWLEDGE_MAX_DOCUMENT_CHARS: ${ASF_KNOWLEDGE_MAX_DOCUMENT_CHARS:-250000}
+      ASF_KNOWLEDGE_MAX_TOTAL_CHARS_PER_TENANT: ${ASF_KNOWLEDGE_MAX_TOTAL_CHARS_PER_TENANT:-5000000}
+      ASF_KNOWLEDGE_CHUNK_CHARS: ${ASF_KNOWLEDGE_CHUNK_CHARS:-1200}
+      ASF_KNOWLEDGE_CHUNK_OVERLAP_CHARS: ${ASF_KNOWLEDGE_CHUNK_OVERLAP_CHARS:-180}
+      ASF_KNOWLEDGE_MAX_QUERY_RESULTS: ${ASF_KNOWLEDGE_MAX_QUERY_RESULTS:-8}
     volumes:
       - ./data/api:/data
       - ${ASF_DOCKER_KUBECONFIG:-./data/kube/asf-vps-internal.kubeconfig}:/kube/config:ro
       - ./workflows:/app/workflows:ro
+      - ./benchmarks:/app/benchmarks:ro
       - ./skills:/app/skills:ro
       - ./prompts:/app/prompts:ro
     depends_on:
       api:
         condition: service_healthy
       temporal:
+        condition: service_started
+      otel-collector:
         condition: service_started
     networks:
       - default
@@ -271,16 +608,16 @@ services:
     build:
       context: ./apps/web
       args:
-        NEXT_PUBLIC_API_BASE_URL: https://${ASF_API_DOMAIN:?Set ASF_API_DOMAIN}
-        NEXT_PUBLIC_DEFAULT_TENANT_ID: ${ASF_DEFAULT_TENANT_ID:-production}
-        NEXT_PUBLIC_OIDC_ISSUER_URL: https://${ASF_AUTH_DOMAIN:?Set ASF_AUTH_DOMAIN}/realms/software-factory
-        NEXT_PUBLIC_OIDC_CLIENT_ID: software-factory-web
+        NEXT_PUBLIC_API_BASE_URL: /api-proxy
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_BASE_URL: https://${ASF_API_DOMAIN:?Set ASF_API_DOMAIN}
-      NEXT_PUBLIC_DEFAULT_TENANT_ID: ${ASF_DEFAULT_TENANT_ID:-production}
-      NEXT_PUBLIC_OIDC_ISSUER_URL: https://${ASF_AUTH_DOMAIN:?Set ASF_AUTH_DOMAIN}/realms/software-factory
-      NEXT_PUBLIC_OIDC_CLIENT_ID: software-factory-web
+      NEXT_PUBLIC_API_BASE_URL: /api-proxy
+      API_INTERNAL_BASE_URL: http://api:8000
+      OIDC_ISSUER_URL: http://keycloak:8080/realms/software-factory
+      OIDC_PUBLIC_ISSUER_URL: https://${ASF_AUTH_DOMAIN:?Set ASF_AUTH_DOMAIN}/realms/software-factory
+      OIDC_CLIENT_ID: software-factory-web
+      APP_BASE_URL: https://${ASF_PUBLIC_DOMAIN:?Set ASF_PUBLIC_DOMAIN}
+      SESSION_COOKIE_SECURE: "true"
     depends_on:
       api:
         condition: service_healthy

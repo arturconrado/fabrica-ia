@@ -5,10 +5,19 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        ink: "#172026",
-        line: "#D8DEE4",
-        panel: "#FFFFFF",
-        canvas: "#F5F7F8"
+        ink: "rgb(var(--ink) / <alpha-value>)",
+        line: "rgb(var(--line) / <alpha-value>)",
+        panel: "rgb(var(--panel) / <alpha-value>)",
+        canvas: "rgb(var(--canvas) / <alpha-value>)",
+        brand: "rgb(var(--brand) / <alpha-value>)",
+        accent: "rgb(var(--accent) / <alpha-value>)"
+      },
+      fontFamily: {
+        sans: ["Plus Jakarta Sans Variable", "ui-sans-serif", "system-ui", "sans-serif"]
+      },
+      boxShadow: {
+        panel: "0 18px 50px rgba(0, 0, 0, 0.18)",
+        focus: "0 0 0 3px rgba(59, 130, 246, 0.35)"
       }
     }
   },

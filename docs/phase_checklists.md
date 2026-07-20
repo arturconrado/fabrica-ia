@@ -17,10 +17,11 @@
 - [x] Run workspace shows agent roster, transcript, live preview, tests, quality, approval and logs.
 
 ## Workflow And HITL
-- [x] Runs are scheduled through Temporal with a run row created before UI navigation.
+- [x] Contracted runs persist run row and Temporal outbox command atomically before UI navigation.
 - [x] Temporal worker activity rehydrates the scheduled run id.
-- [x] Pause, resume, step, cancel and human decisions require a Temporal workflow id.
-- [x] Approval/reject/request-changes send Temporal signals before local state mutation.
+- [x] Pause, resume and step use persisted cooperative checkpoints; cancel waits for runner acknowledgement before releasing capacity.
+- [x] Approval/reject persist local evidence and a transactional outbox signal atomically; ASF rework is explicitly blocked until it has a versioned executor.
+- [x] Temporal starts are deduplicated by deterministic workflow ID and `USE_EXISTING`; the activity heartbeats and resumes completed steps.
 
 ## Sandbox, MCP And Storage
 - [x] Sandbox rejects non-Kubernetes backend.
@@ -30,7 +31,7 @@
 - [x] Legacy MCP placeholder files removed from the runtime path.
 - [x] MinIO/S3 configuration remains required for artifact storage.
 - [x] Local kind PV/PVC maps `data/api/workspaces` into sandbox Jobs.
-- [x] Sandbox Job mounts workspace with `subPath={run_id}`.
+- [x] Sandbox Job mounts workspace with `subPath=tenants/{tenant_id}/{run_id}`.
 - [x] Local sandbox image includes pytest and runs only the allowlisted command.
 
 ## Local Full-Infra Automation
@@ -54,10 +55,9 @@
 - [x] `Makefile` exposes `vps-docker-up`, `vps-docker-validate` and `vps-docker-down`.
 
 ## Batch
-- [x] `POST /batches` schedules enterprise portfolio child runs through Temporal.
-- [x] Batch items are tenant-scoped and linked to child runs.
-- [x] Batch scheduling metric is persisted.
-- [x] Public legacy batch endpoint removed.
+- [x] The hard-coded technical `POST /batches` endpoint is blocked in production.
+- [x] Contracted intake batch uses tenant-scoped `POST /api/v1/prospect-batches`.
+- [ ] A production batch executor is intentionally deferred until it has its own versioned blueprint and completion reconciliation.
 
 ## Documentation
 - [x] README describes Docker + kind full-infra validation.
@@ -75,9 +75,9 @@
 - [ ] Keycloak login/token flow verified end to end.
 - [ ] Real LiteLLM/OpenRouter run completes all agents.
 - [ ] Temporal workflow resumes from worker restart and receives human signals.
-- [ ] Temporal workflow decomposed into per-agent activities for hard pause/step during execution.
-- [ ] Kubernetes sandbox Job mounts `asf-sandbox-workspaces` with `subPath={run_id}` and executes pytest.
+- [ ] Temporal workflow decomposed into per-agent activities; the pilot currently pauses safely at persisted cooperative step boundaries inside one heartbeating activity.
+- [ ] Kubernetes sandbox Job mounts `asf-sandbox-workspaces` with `subPath=tenants/{tenant_id}/{run_id}` and executes pytest.
 - [ ] MCP HTTP/SSE gateway tool call succeeds and denied tool call is audited.
-- [ ] Playwright run against the real stack covers enterprise build, approval, feedback and batch.
+- [ ] Playwright run against the real stack covers enterprise build, approval, feedback and prospect intake batch.
 
 Last update: Docker-first local control container.
