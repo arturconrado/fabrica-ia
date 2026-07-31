@@ -1,6 +1,7 @@
 export function statusClass(status?: string) {
   const normalized = status || "pending";
   if (["success", "approved", "approved_for_homologation", "passed"].includes(normalized)) return "bg-emerald-100 text-emerald-800 border-emerald-200";
+  if (["synthetic_approved", "synthetic_delivered", "synthetic_passed", "synthetic_approved_for_homologation"].includes(normalized)) return "bg-violet-100 text-violet-900 border-violet-200";
   if (["running"].includes(normalized)) return "bg-blue-100 text-blue-800 border-blue-200";
   if (["waiting_for_human", "pending", "queued"].includes(normalized)) return "bg-amber-100 text-amber-900 border-amber-200";
   if (["failed", "rejected", "needs_changes"].includes(normalized)) return "bg-red-100 text-red-800 border-red-200";

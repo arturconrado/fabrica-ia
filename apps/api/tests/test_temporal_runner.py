@@ -2,6 +2,7 @@ import asyncio
 
 from temporalio.client import Client
 from temporalio.common import WorkflowIDConflictPolicy
+from temporalio.service import RPCError, RPCStatusCode
 
 from app.providers.temporal_runner import TemporalWorkflowRunner
 
@@ -80,3 +81,20 @@ def test_temporal_closed_status_is_observable(monkeypatch):
 
     monkeypatch.setattr(Client, "connect", connect)
     assert asyncio.run(TemporalWorkflowRunner().is_workflow_closed("workflow-closed")) is True
+
+
+def test_temporal_missing_workflow_is_terminal_for_reconciliation(monkeypatch):
+    class Handle:
+        async def describe(self):
+            raise RPCError("workflow not found", RPCStatusCode.NOT_FOUND, b"")
+
+    class FakeClient:
+        def get_workflow_handle(self, workflow_id):
+            assert workflow_id == "workflow-missing"
+            return Handle()
+
+    async def connect(*args, **kwargs):
+        return FakeClient()
+
+    monkeypatch.setattr(Client, "connect", connect)
+    assert asyncio.run(TemporalWorkflowRunner().is_workflow_closed("workflow-missing")) is True

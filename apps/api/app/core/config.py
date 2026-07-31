@@ -2,6 +2,7 @@ import os
 from functools import lru_cache
 from typing import List, Optional
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +10,11 @@ class Settings(BaseSettings):
     environment: str = "production-like"
     runtime_profile: str = "homologation"
     database_url: str = "postgresql+psycopg://factory:factory@localhost:5432/factory"
+    api_workers: int = 4
+    api_threadpool_tokens: int = Field(default=40, ge=40, le=256)
+    db_pool_size: int = 5
+    db_max_overflow: int = 5
+    db_pool_timeout_seconds: int = 15
     data_dir: str = "./data"
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
@@ -44,6 +50,7 @@ class Settings(BaseSettings):
     reasoning_model_max_output_tokens: int = 16_000
     code_model_max_output_tokens: int = 32_000
     model_monthly_budget_usd: float = 250.0
+    homologation_global_budget_usd: float = Field(default=0.0, ge=0.0, le=100.0)
     model_run_budget_usd: float = 15.0
     model_commercial_operation_budget_usd: float = 2.0
     model_engagement_plan_budget_usd: float = 2.0
@@ -54,9 +61,11 @@ class Settings(BaseSettings):
     agent_max_step_attempts: int = 2
     agent_retry_backoff_seconds: float = 6.0
     agent_max_total_steps: int = 32
+    ai_native_policy_version: str = "2.13.2"
+    production_plugins_enabled: bool = True
+    plugin_fail_closed: bool = True
 
     mcp_enabled: bool = True
-    mcp_registry_path: str = "./data/mcp/servers.json"
     mcp_request_timeout_seconds: int = 30
 
     sandbox_backend: str = "local_trusted"
@@ -165,8 +174,16 @@ def validate_production_runtime(settings: Optional[Settings] = None) -> None:
     runtime_profile = settings.runtime_profile.lower()
     agent_provider = settings.agent_provider.lower()
     workflow_backend = settings.workflow_backend.lower()
+    if settings.ai_native_policy_version not in {"2.13.0", "2.13.1", "2.13.2", "2.14.0"}:
+        errors.append("ASF_AI_NATIVE_POLICY_VERSION must be 2.13.0, 2.13.1, 2.13.2 or 2.14.0")
+    if settings.ai_native_policy_version in {"2.13.2", "2.14.0"}:
+        if not settings.production_plugins_enabled:
+            errors.append("ASF_PRODUCTION_PLUGINS_ENABLED must be true for policies 2.13.2 and 2.14.0")
+        if not settings.plugin_fail_closed:
+            errors.append("ASF_PLUGIN_FAIL_CLOSED must be true for policies 2.13.2 and 2.14.0")
     allowed_matrix = {
         ("homologation", "litellm", "homologation"),
+        ("homologation", "litellm", "temporal"),
         ("test", "mock", "homologation"),
         ("production", "litellm", "temporal"),
     }
@@ -190,6 +207,10 @@ def validate_production_runtime(settings: Optional[Settings] = None) -> None:
 
     if settings.database_url.startswith("sqlite"):
         errors.append("SQLite is not allowed in production")
+    if settings.api_workers < 4:
+        errors.append("ASF_API_WORKERS must be at least 4 in production")
+    if settings.db_pool_size != 5 or settings.db_max_overflow != 5 or settings.db_pool_timeout_seconds != 15:
+        errors.append("Production DB pool must use size=5, overflow=5 and timeout=15 seconds")
     if settings.auth_disabled:
         errors.append("ASF_AUTH_DISABLED must be false in production")
     if settings.dev_auth_token:

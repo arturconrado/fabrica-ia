@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import Principal, require_roles
+from app.api.routes_service_delivery_os import _tenant_projection
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import (
@@ -143,12 +144,36 @@ def _inbox_item(kind: str, approval) -> dict:
 
 
 @router.get("/inbox", response_model=ReviewInboxResponse)
-def review_inbox(principal: Principal = Depends(_principal_dependency()), db: Session = Depends(get_db)):
-    run_approvals = db.query(ApprovalRequest).filter_by(tenant_id=principal.tenant_id).order_by(ApprovalRequest.created_at.desc()).all()
-    service_approvals = db.query(Approval).filter_by(tenant_id=principal.tenant_id).order_by(Approval.created_at.desc()).all()
-    items = [_inbox_item("run", row) for row in run_approvals] + [_inbox_item("service", row) for row in service_approvals]
-    items.sort(key=lambda item: (item["status"] != "pending", item["created_at"]), reverse=False)
-    return {"tenant_id": principal.tenant_id, "items": items}
+def review_inbox(
+    principal: Principal = Depends(_principal_dependency()),
+    db: Session = Depends(get_db),
+    request: Request = None,
+):
+    def build():
+        run_approvals = db.query(ApprovalRequest).filter_by(tenant_id=principal.tenant_id).order_by(ApprovalRequest.created_at.desc()).all()
+        service_approvals = (
+            db.query(Approval)
+            .filter(Approval.tenant_id == principal.tenant_id, Approval.resource_type != "service_deliverable")
+            .order_by(Approval.created_at.desc())
+            .all()
+        )
+        items = [_inbox_item("run", row) for row in run_approvals] + [_inbox_item("service", row) for row in service_approvals]
+        items.sort(key=lambda item: (item["status"] != "pending", item["created_at"]), reverse=False)
+        return {"tenant_id": principal.tenant_id, "items": items}
+
+    if request is None:
+        response = build()
+        db.rollback()
+        return response
+    return _tenant_projection(
+        db,
+        tenant_id=principal.tenant_id,
+        projection="review-inbox",
+        build=build,
+        accepts_gzip=bool(
+            request and "gzip" in request.headers.get("Accept-Encoding", "").casefold()
+        ),
+    )
 
 
 @router.get("/evidence", response_model=list[ReviewArtifact])
@@ -205,6 +230,20 @@ def decide_review_item(
 
     service_approval = db.query(Approval).filter_by(tenant_id=principal.tenant_id, id=approval_id).first()
     if service_approval:
+        if service_approval.resource_type == "service_deliverable":
+            raise HTTPException(
+                status_code=409,
+                detail="Service deliverables must be decided through the versioned deliverable decision endpoint",
+            )
+        if payload.validation_mode == "synthetic":
+            append_ledger_event(
+                db, tenant_id=principal.tenant_id, aggregate_type="approval", aggregate_id=service_approval.id,
+                event_type=f"review.synthetic_{payload.decision}", actor_user_id=principal.user_id,
+                idempotency_key=idempotency_key,
+                payload={"summary": f"Synthetic review decision: {payload.decision}", "comment": payload.comment.strip(), "validation_mode": "synthetic"},
+            )
+            db.commit()
+            return review_item(approval_id, principal, db)
         if payload.decision == "changes_requested":
             service_approval.status = "pending"
             service_approval.decision = "changes_requested"
@@ -241,14 +280,44 @@ def decide_review_item(
         raise HTTPException(status_code=404, detail="Run not found")
 
     if payload.decision == "approve":
-        run = provider.approve_run(db, run.id, payload.comment.strip(), commit=False)
+        run = provider.approve_run(
+            db,
+            run.id,
+            payload.comment.strip(),
+            validation_mode=payload.validation_mode,
+            commit=False,
+        )
         if get_settings().workflow_backend.lower() == "temporal" and run.temporal_workflow_id:
-            enqueue_signal(db, run, signal_name="human_decision", payload={"decision": "approved"}, decision_key="approved")
+            enqueue_signal(
+                db,
+                run,
+                signal_name="human_decision",
+                payload={"decision": "approved", "validation_mode": payload.validation_mode},
+                decision_key=f"approved:{payload.validation_mode}",
+            )
     elif payload.decision == "reject":
+        if payload.validation_mode == "synthetic":
+            append_ledger_event(
+                db, tenant_id=principal.tenant_id, aggregate_type="approval_request", aggregate_id=run_approval.id,
+                event_type="review.synthetic_reject", actor_user_id=principal.user_id,
+                idempotency_key=idempotency_key,
+                payload={"summary": "Synthetic review decision: reject", "run_id": run.id, "comment": payload.comment.strip(), "validation_mode": "synthetic"},
+            )
+            db.commit()
+            return review_item(approval_id, principal, db)
         run = provider.reject_run(db, run.id, payload.comment.strip(), commit=False)
         if get_settings().workflow_backend.lower() == "temporal" and run.temporal_workflow_id:
             enqueue_signal(db, run, signal_name="human_decision", payload={"decision": "rejected"}, decision_key="rejected")
     else:
+        if payload.validation_mode == "synthetic":
+            append_ledger_event(
+                db, tenant_id=principal.tenant_id, aggregate_type="approval_request", aggregate_id=run_approval.id,
+                event_type="review.synthetic_changes_requested", actor_user_id=principal.user_id,
+                idempotency_key=idempotency_key,
+                payload={"summary": "Synthetic review decision: changes_requested", "run_id": run.id, "comment": payload.comment.strip(), "validation_mode": "synthetic"},
+            )
+            db.commit()
+            return review_item(approval_id, principal, db)
         run = provider.request_changes(db, run.id, payload.comment.strip(), commit=False)
         if get_settings().workflow_backend.lower() == "temporal" and run.temporal_workflow_id:
             enqueue_signal(
@@ -264,10 +333,10 @@ def decide_review_item(
         tenant_id=principal.tenant_id,
         aggregate_type="approval_request",
         aggregate_id=run_approval.id,
-        event_type=f"review.{payload.decision}",
+        event_type=f"review.{payload.decision}" if payload.validation_mode == "real" else f"review.synthetic_{payload.decision}",
         actor_user_id=principal.user_id,
         idempotency_key=idempotency_key,
-        payload={"summary": f"Review decision: {payload.decision}", "run_id": run.id, "comment": payload.comment.strip()},
+        payload={"summary": f"Review decision: {payload.decision}", "run_id": run.id, "comment": payload.comment.strip(), "validation_mode": payload.validation_mode},
     )
     db.commit()
     if (

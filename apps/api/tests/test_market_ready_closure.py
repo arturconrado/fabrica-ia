@@ -29,6 +29,7 @@ from app.models import (
     LearningEvaluation,
     LedgerRecord,
     ModelCall,
+    PluginInvocation,
     Project,
     WorkflowNodeState,
     WorkflowDefinition,
@@ -309,7 +310,11 @@ class ProviderAwareCacheGateway(ModelGateway):
 
 
 class GranularSegmentedGateway:
+    def __init__(self):
+        self.calls = []
+
     def call(self, **kwargs):
+        self.calls.append(kwargs)
         schema = kwargs.get("response_schema") or {}
         properties = schema.get("properties") or {}
         if "units" in properties:
@@ -410,6 +415,15 @@ graph:
         allowed_reference_types: [demand]
         input_budget_tokens: 4000
         file_mode: none
+        unit_context_mode: compact
+        compact_spec_enabled: true
+        plan_input_budget_tokens: 2500
+        unit_input_budget_tokens: 2500
+        finalize_input_budget_tokens: 1200
+      plan_model_role: fast
+      finalize_model_role: fast
+      minimal_solution_policy: true
+      cavekit_stages: [spec, review, caveman]
     - {id: Human Approval, type: human, phase: approval}
     - {id: FINAL, type: terminal}
   edges:
@@ -421,7 +435,8 @@ graph:
     run.context_manifest_json = {"workflow_version": definition.version}
     db.add(definition)
     db.commit()
-    executor = AINativeWorkflowExecutor(gateway=GranularSegmentedGateway())
+    gateway = GranularSegmentedGateway()
+    executor = AINativeWorkflowExecutor(gateway=gateway)
 
     planned = executor.plan_temporal_segmented_node(db, run=run)
     assert planned["status"] == "planned"
@@ -438,6 +453,17 @@ graph:
     )
     assert final["status"] == "completed"
     assert db.query(ModelCall).filter_by(run_id=run.id).count() == 3
+    cavekit_rows = db.query(PluginInvocation).filter_by(run_id=run.id, plugin_name="cavekit").all()
+    assert cavekit_rows
+    assert {row.status for row in cavekit_rows} == {"completed"}
+    assert all((row.metadata_json or {}).get("evidence_type") for row in cavekit_rows)
+    compact_units = db.query(ExecutionUnit).filter_by(run_id=run.id).all()
+    assert compact_units
+    assert all(unit.context_hash for unit in compact_units)
+    assert all(unit.optimization_policy_version == "2.13.test" for unit in compact_units)
+    assert [call["model_role"] for call in gateway.calls] == ["fast", "reasoning", "fast"]
+    assert gateway.calls[1]["messages"][0]["content"] == gateway.calls[2]["messages"][0]["content"]
+    assert "architecture-core" not in gateway.calls[1]["messages"][0]["content"]
 
     definition_row, node = executor._segmented_definition_and_node(db, run)
     result = executor._execute_segmented_node(

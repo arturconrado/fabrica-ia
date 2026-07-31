@@ -5,12 +5,13 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("ASF_DATABASE_URL", "sqlite:///:memory:")
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import ProductionRuntimeConfigError, Settings, get_settings, validate_production_runtime
 from app.auth.dependencies import ensure_tenant, ensure_user_membership
-from app.models import AIActivity, AgentRunState, Approval, ApprovalRequest, Artifact, AuditProjection, Base, CommercialProposal, ComponentInstance, Contract, Entitlement, HomologationPackage, HomologationReport, LedgerRecord, MvpRun, Opportunity, Program, Project, PromptEvaluation, PromptVersion, QualityGate, Tenant, WorkflowRun, WorkflowSlot, utcnow
+from app.models import AIActivity, AgentRunState, Approval, ApprovalRequest, Artifact, AuditProjection, Base, CommercialProposal, ComponentInstance, Contract, Entitlement, FileChange, HomologationPackage, HomologationReport, LearningSignal, LedgerRecord, MvpRun, Opportunity, PluginInvocation, Program, Project, PromptEvaluation, PromptVersion, QualityGate, Tenant, TestReport as ModelTestReport, WorkflowRun, WorkflowSlot, utcnow
 from app.agents.production_pipeline_provider import ProductionPipelineProvider
 from app.service_delivery.ai_prompts import ACTIVE_PROMPT_VERSION, PROMPT_DEFINITIONS, PROMPT_FIXTURES
 from app.service_delivery.demo_seed import ATLAS_TENANT_ID, NIMBUS_TENANT_ID, seed_demo_data
@@ -133,6 +134,15 @@ def test_runtime_matrix_allows_test_mock_and_blocks_operational_mock():
             database_url="postgresql+psycopg://factory:factory@localhost:5432/factory",
         )
     )
+    validate_production_runtime(
+        Settings(
+            runtime_profile="homologation",
+            agent_provider="litellm",
+            workflow_backend="temporal",
+            litellm_api_key="local-homologation-key",
+            database_url="postgresql+psycopg://factory:factory@localhost:5432/factory",
+        )
+    )
     with pytest.raises(ProductionRuntimeConfigError):
         validate_production_runtime(
             Settings(
@@ -140,6 +150,17 @@ def test_runtime_matrix_allows_test_mock_and_blocks_operational_mock():
                 agent_provider="mock",
                 workflow_backend="homologation",
                 database_url="postgresql+psycopg://factory:factory@localhost:5432/factory",
+            )
+        )
+    with pytest.raises(ProductionRuntimeConfigError, match="ASF_PRODUCTION_PLUGINS_ENABLED"):
+        validate_production_runtime(
+            Settings(
+                runtime_profile="test",
+                agent_provider="mock",
+                workflow_backend="homologation",
+                database_url="postgresql+psycopg://factory:factory@localhost:5432/factory",
+                ai_native_policy_version="2.13.2",
+                production_plugins_enabled=False,
             )
         )
     with pytest.raises(ProductionRuntimeConfigError):
@@ -151,6 +172,12 @@ def test_runtime_matrix_allows_test_mock_and_blocks_operational_mock():
                 database_url="postgresql+psycopg://factory:factory@localhost:5432/factory",
             )
         )
+
+
+def test_homologation_global_budget_cannot_exceed_release_cap():
+    assert Settings(homologation_global_budget_usd=100).homologation_global_budget_usd == 100
+    with pytest.raises(ValidationError):
+        Settings(homologation_global_budget_usd=100.01)
 
 
 def test_production_runtime_requires_an_otlp_trace_exporter():
@@ -824,3 +851,176 @@ def test_human_approval_cannot_override_technical_blocker(db):
     assert exc.value.detail["code"] == "TECHNICAL_BLOCKERS_PRESENT"
     assert run.status == "waiting_for_human"
     assert db.get(QualityGate, "blocked-test-gate").status == "blocked"
+
+
+def test_real_technical_approval_requires_all_17_gates_hrs_and_code_diffs(db):
+    data = seed_demo_data(db)
+    run = WorkflowRun(
+        id="strict-real-approval-run",
+        tenant_id=ATLAS_TENANT_ID,
+        project_id=data["atlas_project_id"],
+        workflow_id="software_factory_homologation_v1",
+        generation_mode="ai_native_v2",
+        demand="MVP de orçamentação agêntica",
+        status="waiting_for_human",
+    )
+    approval = ApprovalRequest(
+        id="strict-real-approval-request",
+        tenant_id=ATLAS_TENANT_ID,
+        run_id=run.id,
+        title="Final approval",
+        description="Review code, tests and evidence",
+        status="pending",
+        requested_action="approve_for_homologation",
+    )
+    from app.quality.quality_gate_engine import QUALITY_GATES
+
+    gates = [
+        QualityGate(
+            id=f"strict-gate-{gate_id}",
+            tenant_id=ATLAS_TENANT_ID,
+            run_id=run.id,
+            gate_id=gate_id,
+            name=name,
+            category=category,
+            status="review_required" if gate_id == "human_approval" else "passed",
+            score=0 if gate_id == "human_approval" else 100,
+            blockers_json=[],
+            warnings_json=[],
+        )
+        for gate_id, name, category in QUALITY_GATES
+    ]
+    report = HomologationReport(
+        id="strict-real-report",
+        tenant_id=ATLAS_TENANT_ID,
+        run_id=run.id,
+        status="waiting_for_human",
+        score=94,
+        blockers_json=[],
+        risks_json=[],
+        summary="All technical evidence awaits final human review.",
+    )
+    package = HomologationPackage(
+        id="strict-real-package",
+        tenant_id=ATLAS_TENANT_ID,
+        run_id=run.id,
+        path="/tmp/strict-real-package",
+        status="created",
+        manifest_json={"source_files": ["generated_app/app.py"]},
+    )
+    passing = ModelTestReport(
+        id="strict-real-tests",
+        tenant_id=ATLAS_TENANT_ID,
+        run_id=run.id,
+        command="pytest",
+        status="passed",
+        passed_count=12,
+        failed_count=0,
+    )
+    plugins = [
+        PluginInvocation(
+            id=f"strict-{plugin_name}",
+            tenant_id=ATLAS_TENANT_ID,
+            run_id=run.id,
+            plugin_name=plugin_name,
+            plugin_version="pinned-test",
+            source_revision="reviewed-test",
+            command="full" if plugin_name == "ponytail" else "check",
+            status="completed",
+            invocation_key=f"strict:{plugin_name}",
+            input_hash="a" * 64,
+            output_hash="b" * 64,
+        )
+        for plugin_name in ("ponytail", "cavekit")
+    ]
+    db.add_all([run, approval, *gates, report, package, passing, *plugins])
+    db.flush()
+
+    with pytest.raises(DomainError) as exc:
+        ProductionPipelineProvider().approve_run(
+            db,
+            run.id,
+            "I reviewed the evidence.",
+            validation_mode="real",
+            commit=False,
+        )
+    assert exc.value.detail["code"] == "TECHNICAL_BLOCKERS_PRESENT"
+    assert "code_file_changes_missing" in exc.value.detail["details"]["strict_blockers"]
+    assert run.status == "waiting_for_human"
+
+    db.add(
+        FileChange(
+            id="strict-real-change",
+            tenant_id=ATLAS_TENANT_ID,
+            run_id=run.id,
+            node_id="Engineer",
+            file_path="generated_app/app.py",
+            change_type="create",
+            before_content="",
+            after_content="def quote():\n    return {'status': 'draft'}\n",
+            diff=(
+                "--- /dev/null\n+++ generated_app/app.py\n"
+                "@@ -0,0 +1,2 @@\n+def quote():\n+    return {'status': 'draft'}\n"
+            ),
+        )
+    )
+    db.flush()
+
+    approved = ProductionPipelineProvider().approve_run(
+        db,
+        run.id,
+        "Código, diffs, testes, 17 gates e riscos revisados.",
+        validation_mode="real",
+        commit=False,
+    )
+
+    assert approved.status == "approved_for_homologation"
+    assert approved.homologation_readiness_score == 100
+    assert approval.status == "approved"
+
+
+def test_synthetic_human_approval_finishes_functional_flow_without_real_release(db):
+    data = seed_demo_data(db)
+    run = WorkflowRun(
+        id="synthetic-approval-run", tenant_id=ATLAS_TENANT_ID,
+        project_id=data["atlas_project_id"], workflow_id="software_factory_homologation_v1",
+        demand="synthetic approval test", status="waiting_for_human",
+    )
+    approval = ApprovalRequest(
+        id="synthetic-approval-request", tenant_id=ATLAS_TENANT_ID, run_id=run.id,
+        title="Final approval", description="Functional test only", status="pending",
+        requested_action="approve_for_homologation",
+    )
+    gate = QualityGate(
+        id="synthetic-human-gate", tenant_id=ATLAS_TENANT_ID, run_id=run.id,
+        gate_id="human_approval", name="Human approval", category="human",
+        status="review_required", score=0,
+    )
+    report = HomologationReport(
+        id="synthetic-report", tenant_id=ATLAS_TENANT_ID, run_id=run.id,
+        status="waiting_for_human", score=100, blockers_json=[], risks_json=[], summary="Ready",
+    )
+    package = HomologationPackage(
+        id="synthetic-package", tenant_id=ATLAS_TENANT_ID, run_id=run.id,
+        path="/tmp/synthetic", status="created", manifest_json={},
+    )
+    passing = ModelTestReport(
+        id="synthetic-tests", tenant_id=ATLAS_TENANT_ID, run_id=run.id,
+        command="pytest", status="passed", passed_count=1,
+    )
+    db.add_all([run, approval, gate, report, package, passing])
+    db.flush()
+
+    result = ProductionPipelineProvider().approve_run(
+        db, run.id, "Simulated reviewer for functional validation",
+        validation_mode="synthetic", commit=False,
+    )
+
+    assert result.status == "synthetic_approved_for_homologation"
+    assert approval.status == "synthetic_approved"
+    assert gate.status == "synthetic_passed"
+    assert report.status == "synthetic_approved_for_homologation"
+    assert package.status == "synthetic_approved"
+    assert package.manifest_json["human_approval"]["validation_mode"] == "synthetic"
+    signal = db.query(LearningSignal).filter_by(run_id=run.id, signal_type="human.approval").one()
+    assert signal.eligible_for_global is False

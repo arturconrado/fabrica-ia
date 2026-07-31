@@ -71,6 +71,7 @@ TENANT_TABLES = [
     "knowledge_chunks",
     "knowledge_queries",
     "model_calls",
+    "plugin_invocations",
     "engagements",
     "engagement_plans",
     "workstreams",
@@ -84,8 +85,12 @@ TENANT_TABLES = [
     "agent_candidates",
     "agent_evaluations",
     "agent_assignments",
+    "service_cycles",
+    "service_executions",
+    "service_acceptance_checks",
+    "engagement_dependencies",
 ]
-PRODUCTION_SCHEMA_REVISION = "0013_aggregate_technical_metrics"
+PRODUCTION_SCHEMA_REVISION = "0017_rls_safe_service_scheduler"
 
 
 def _add_column_if_missing(table_name: str, column_name: str, ddl: str) -> None:
@@ -201,6 +206,10 @@ def init_db() -> None:
             "offering_versions",
             "engagements",
             "service_deliverables",
+            "service_cycles",
+            "service_executions",
+            "service_acceptance_checks",
+            "engagement_dependencies",
             "agent_definitions",
         }
         missing = required.difference(inspect(engine).get_table_names())

@@ -5,8 +5,20 @@ type Schemas = components["schemas"];
 export type Provenance = Schemas["MetricValue"]["provenance"];
 export type MetricValue = Schemas["MetricValue"];
 export type NextAction = Schemas["NextAction"];
-export type TenantSummary = Schemas["TenantSummary"];
-export type PortfolioResponse = Schemas["PortfolioResponse"];
+export type OperationalGuidance = {
+  action: NextAction;
+  why_now: string;
+  checks: string[];
+  risks: string[];
+  draft: string;
+  evidence_refs: string[];
+  confidence: number;
+  provenance: { source: "ai" | "deterministic_fallback"; model_call_id: string | null; generated_from: string[] };
+  state_hash: string;
+  generated_at: string;
+};
+export type TenantSummary = Schemas["TenantSummary"] & { guidance?: OperationalGuidance | null };
+export type PortfolioResponse = Omit<Schemas["PortfolioResponse"], "clients"> & { clients: TenantSummary[] };
 
 export type LedgerEvent = {
   id: string;
@@ -18,7 +30,7 @@ export type LedgerEvent = {
   created_at: string;
 };
 
-export type OperatorOverview = Omit<Schemas["OverviewResponse"], "recent_events"> & { recent_events: LedgerEvent[] };
+export type OperatorOverview = Omit<Schemas["OverviewResponse"], "client" | "recent_events"> & { client: TenantSummary; recent_events: LedgerEvent[] };
 
 export type GamificationEvent = { id: string; event_type: string; points: number; reason: string; ledger_record_id: string; created_at: string };
 export type GamificationProfile = Omit<Schemas["GamificationProfileResponse"], "recent_events"> & { recent_events: GamificationEvent[] };
@@ -35,6 +47,7 @@ export type ServiceOffering = {
   status: string;
   version_id: string;
   version: string;
+  version_status: "candidate" | "active" | "superseded" | "rejected";
   duration_label: string;
   cadence: string;
   checksum: string;
@@ -43,6 +56,33 @@ export type ServiceOffering = {
     stages?: string[];
     deliverables?: string[];
     definition_of_done?: string[];
+    journey_stage?: string;
+    process?: Array<{ name: string; mode: "agent" | "technical_run" | "human" | "integration"; activities: string[] }>;
+    deliverable_templates?: Array<{
+      key: string;
+      title: string;
+      audience?: string;
+      formats: string[];
+      execution_mode: string;
+      responsible: string;
+      approver_role: string;
+      required_sections?: string[];
+      required_evidence?: string[];
+      acceptance_criteria: string[];
+    }>;
+    corporate_definition_of_done?: string[];
+    external_constraints?: string[];
+    portfolio_commitment?: string;
+    team?: string[];
+    homologation_cycles?: number;
+    valid_terminal_outcomes?: string[];
+    technical_workflow_version?: string;
+    technical_run_groups?: Array<{
+      key: string;
+      title: string;
+      anchor_template_key: string;
+      deliverable_template_keys: string[];
+    }>;
   };
 };
 
@@ -83,7 +123,8 @@ export type Engagement = {
   created_at: string;
   offering?: ServiceOffering & { definition: ServiceOffering["definition"] };
   latest_plan?: EngagementPlan | null;
-  counts?: { workstreams: number; deliverables: number; work_items: number; agent_assignments: number; deliverables_completed: number };
+  guidance?: OperationalGuidance | null;
+  counts?: { workstreams: number; deliverables: number; work_items: number; agent_assignments: number; deliverables_completed: number; deliverables_in_review: number; acceptance_checks_pending: number; acceptance_checks_passed: number; acceptance_checks_total: number; active_executions: number };
 };
 
 export type EngagementPlan = {
@@ -111,6 +152,14 @@ export type WorkItem = {
   engagement_id: string;
   engagement_name?: string;
   deliverable_id?: string | null;
+  cycle_id?: string | null;
+  execution_mode: "agent" | "technical_run" | "human" | "integration";
+  operation_key?: string;
+  run_id?: string | null;
+  related_deliverables?: Array<{ id: string; title: string; status: string }>;
+  operator_profile?: string;
+  execution_id?: string | null;
+  execution_status?: string | null;
   title: string;
   description?: string;
   status: string;
@@ -119,6 +168,60 @@ export type WorkItem = {
   blocked_reason: string;
   record_version: number;
   wip_override?: boolean;
+};
+
+export type ServiceCycle = {
+  id: string;
+  engagement_id: string;
+  sequence: number;
+  status: string;
+  period_start: string | null;
+  period_end: string | null;
+  record_version: number;
+};
+
+export type ServiceExecution = {
+  id: string;
+  engagement_id: string;
+  work_item_id: string;
+  deliverable_id: string | null;
+  cycle_id: string | null;
+  execution_mode: WorkItem["execution_mode"];
+  status: string;
+  temporal_workflow_id: string;
+  attempt_count: number;
+  max_attempts: number;
+  last_error: string;
+  evidence_json: Record<string, unknown>;
+  estimated_cost_usd: number;
+  record_version: number;
+  heartbeat_at: string | null;
+  created_at: string;
+};
+
+export type ServiceAcceptanceCheck = {
+  id: string;
+  engagement_id: string;
+  deliverable_id: string | null;
+  cycle_id: string | null;
+  cycle_key: string;
+  scope: "offering" | "corporate";
+  check_key: string;
+  description: string;
+  status: string;
+  evidence_refs_json: string[];
+  impact: string;
+  mitigation: string;
+  record_version: number;
+};
+
+export type EngagementDependency = {
+  id: string;
+  engagement_id: string;
+  depends_on_engagement_id: string;
+  dependency_type: string;
+  status: string;
+  evidence_refs_json: string[];
 };
 
 export type ServiceDeliverable = {
@@ -141,6 +244,7 @@ export type ServiceDeliverable = {
   offering?: { code: string; name: string } | null;
   latest_revision?: DeliverableRevision | null;
   approval?: { id: string; status: string; comments: string } | null;
+  guidance?: OperationalGuidance | null;
   revisions?: DeliverableRevision[];
 };
 

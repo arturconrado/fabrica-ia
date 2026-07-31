@@ -51,11 +51,30 @@ def test_fresh_migration_upgrade_and_downgrade(tmp_path):
         "agent_evaluations",
         "agent_assignments",
         "ai_invocations",
+        "plugin_invocations",
     }.issubset(tables)
     assert "record_version" in {column["name"] for column in inspect(create_engine(database_url)).get_columns("outcome_metrics")}
     assert {"ai_invocation_id", "attempt_number", "retry_classification", "routing_reason", "projected_cost_usd"}.issubset(
         {column["name"] for column in inspect(create_engine(database_url)).get_columns("model_calls")}
     )
+    assert "spec_refs_json" in {
+        column["name"] for column in inspect(create_engine(database_url)).get_columns("file_changes")
+    }
+    assert {"criterion_ids_json", "invariant_ids_json", "test_report_id", "provenance"}.issubset(
+        {column["name"] for column in inspect(create_engine(database_url)).get_columns("requirement_traces")}
+    )
+    inspector = inspect(create_engine(database_url))
+    assert "operator_profile" in {
+        column["name"] for column in inspector.get_columns("memberships")
+    }
+    assert "operation_key" in {
+        column["name"] for column in inspector.get_columns("service_work_items")
+    }
+    operation_index = next(
+        item for item in inspector.get_indexes("service_work_items")
+        if item["name"] == "ix_service_work_items_operation_key"
+    )
+    assert operation_index["column_names"] == ["tenant_id", "engagement_id", "operation_key"]
 
     _alembic(database_url, "downgrade", "base")
     remaining = set(inspect(create_engine(database_url)).get_table_names())

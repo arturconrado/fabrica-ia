@@ -9,7 +9,6 @@ import {
   Clock3,
   Coins,
   DatabaseZap,
-  ServerCog,
 } from "lucide-react";
 
 import {

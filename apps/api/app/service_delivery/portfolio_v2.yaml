@@ -1,0 +1,273 @@
+version: "2.0"
+status: candidate
+journey:
+  - Identificar oportunidades
+  - Priorizar investimentos
+  - Estabelecer governança
+  - Implantar capacidades
+  - Validar casos de uso
+  - Acelerar adoção
+  - Operar continuamente
+corporate_definition_of_done:
+  - Todos os processos previstos no escopo foram executados.
+  - Todos os entregáveis obrigatórios estão disponíveis.
+  - Os critérios de aceite específicos foram validados.
+  - Riscos, limitações e dependências estão documentados.
+  - Os responsáveis pela continuidade estão definidos.
+  - Os treinamentos e o handover previstos foram realizados.
+  - Os acessos e repositórios estão organizados.
+  - O backlog de evolução está consolidado.
+  - A apresentação executiva de encerramento foi realizada.
+  - O cliente recebeu os materiais em formato utilizável e editável.
+external_constraints:
+  - adesão integral dos usuários
+  - resultados financeiros futuros
+  - disponibilização tardia de dados
+  - aprovações de áreas externas
+  - indisponibilidade de fornecedores
+  - integrações não previstas
+  - mudanças de escopo
+  - alterações organizacionais
+  - decisões posteriores do cliente
+commitment: Implantar a capacidade contratada, comprovar seu funcionamento, documentar os resultados e preparar a organização para operar e evoluir a solução.
+offerings:
+  - code: ai_value_discovery
+    display_name: AI Value Discovery
+    description: Serviço de diagnóstico e planejamento que identifica onde a inteligência artificial pode gerar maior valor para a organização.
+    journey_stage: Identificar oportunidades e priorizar investimentos
+    category: entry_service
+    duration_label: 4–6 semanas
+    cadence: one_off
+    component_codes: [ai_value_discovery]
+    team: [engagement_planner, process_value_analyst, solution_platform_architect, deliverable_quality_curator]
+    process:
+      - name: Alinhamento estratégico
+        mode: human
+        activities: [entendimento dos objetivos organizacionais, levantamento das prioridades do negócio, identificação das áreas envolvidas, definição dos critérios de valor, alinhamento sobre restrições e premissas]
+      - name: Diagnóstico de maturidade
+        mode: agent
+        activities: [estratégia, dados, tecnologia, processos, pessoas, governança, segurança, cultura, capacidade de execução]
+      - name: Mapeamento dos processos
+        mode: agent
+        activities: [identificação dos principais processos, levantamento de tarefas manuais, identificação de gargalos, análise de atividades repetitivas, levantamento de sistemas e dados envolvidos, identificação dos pontos de decisão humana]
+      - name: Identificação dos casos de uso
+        mode: agent
+        activities: [impacto financeiro, ganho de produtividade, redução de risco, melhoria da experiência, disponibilidade de dados, dependência de integração, esforço organizacional, criticidade do processo]
+      - name: Priorização
+        mode: agent
+        activities: [classificação dos casos de uso, matriz valor versus complexidade, quick wins, iniciativas estruturantes, seleção do portfólio inicial]
+      - name: Construção do roadmap
+        mode: agent
+        activities: [organização das iniciativas, identificação das dependências, definição da sequência recomendada, definição das capacidades necessárias, construção da visão de evolução]
+    deliverables: [diagnóstico de maturidade em IA, mapa dos processos analisados, inventário de oportunidades, fichas detalhadas dos casos de uso, matriz de impacto risco e complexidade, ranking de oportunidades, business cases preliminares, mapa de dependências, arquitetura de referência, roadmap corporativo de IA, apresentação executiva para decisão]
+    definition_of_done: [as áreas previstas foram analisadas, os processos prioritários foram documentados, as oportunidades foram registradas, os casos de uso foram avaliados por critérios comuns, o portfólio prioritário foi definido, premissas riscos e dependências foram documentados, o roadmap foi consolidado, a recomendação executiva foi apresentada, os materiais foram entregues em formato editável]
+
+  - code: ai_governance_risk_framework
+    display_name: AI Governance & Risk Framework
+    description: Serviço de criação e implantação do modelo corporativo de governança, segurança e gestão de riscos relacionados à inteligência artificial.
+    journey_stage: Estabelecer governança
+    category: productized_service
+    duration_label: 6–8 semanas
+    cadence: one_off
+    component_codes: [responsible_ai_governance]
+    team: [engagement_planner, governance_risk_specialist, deliverable_quality_curator]
+    process:
+      - name: Inventário de IA
+        mode: agent
+        activities: [identificação das soluções em uso, levantamento dos fornecedores, identificação dos modelos utilizados, levantamento dos dados processados, identificação dos responsáveis, registro dos casos de uso existentes]
+      - name: Classificação de riscos
+        mode: agent
+        activities: [privacidade, segurança, dados confidenciais, propriedade intelectual, viés, decisões automatizadas, transparência, alucinação, dependência de fornecedores, continuidade operacional]
+      - name: Definição das políticas
+        mode: agent
+        activities: [política de uso aceitável, política de dados, política de ferramentas autorizadas, política de desenvolvimento, política de validação, política de supervisão humana, política de monitoramento]
+      - name: Modelo de governança
+        mode: agent
+        activities: [definição dos fóruns, estabelecimento dos papéis, matriz de responsabilidades, fluxo de aprovação, processo de exceções, processo de escalonamento]
+      - name: Controles operacionais
+        mode: agent
+        activities: [checklists de avaliação, formulários de aprovação, registro de evidências, avaliação de fornecedores, documentação dos sistemas, processo de incidentes, processo de revisão periódica]
+    deliverables: [inventário corporativo de IA, política corporativa de IA, catálogo de riscos, matriz de classificação, RACI de governança, fluxo de submissão e aprovação, checklist de avaliação de casos de uso, checklist de avaliação de fornecedores, modelo de AI System Card, modelo de registro de decisões, processo de gestão de incidentes, modelo de auditoria, painel inicial de governança]
+    definition_of_done: [o inventário inicial foi consolidado, os riscos foram classificados, as políticas foram documentadas, os papéis foram definidos, o processo de aprovação foi estabelecido, os templates foram disponibilizados, casos reais foram avaliados pelo framework, o processo de incidente foi validado, o repositório de governança foi organizado, os responsáveis foram habilitados para operar o modelo]
+
+  - code: ai_enterprise_launchpad
+    display_name: AI Enterprise Launchpad
+    description: Programa responsável por transformar a estratégia de IA em capacidades organizacionais concretas.
+    journey_stage: Implantar capacidades
+    category: implementation_program
+    duration_label: 8–12 semanas
+    cadence: one_off
+    component_codes: [ai_enterprise_launchpad]
+    team: [engagement_planner, solution_platform_architect, enablement_handover_specialist, governance_risk_specialist, deliverable_quality_curator]
+    process:
+      - name: Preparação organizacional
+        mode: human
+        activities: [alinhamento executivo, definição dos objetivos, identificação das áreas, seleção dos casos de uso, definição dos responsáveis, levantamento das plataformas disponíveis]
+      - name: Desenho do modelo operacional
+        mode: agent
+        activities: [papéis e responsabilidades, processo de entrada de demandas, fluxo de avaliação, modelo de priorização, processo de implantação, suporte aos usuários, gestão dos ativos, medição dos resultados]
+      - name: Configuração das plataformas
+        mode: integration
+        activities: [definição das ferramentas, configuração dos ambientes, definição dos acessos, configuração das políticas, organização dos espaços, criação dos padrões de utilização]
+      - name: Construção das capacidades iniciais
+        mode: agent
+        activities: [biblioteca de prompts, assistentes, agentes, templates, workflows, playbooks, guias por área, base de conhecimento]
+      - name: Ativação das áreas
+        mode: human
+        activities: [treinamento, onboarding, experimentação controlada, coleta de feedback, ajustes nos casos de uso, preparação dos líderes e champions]
+      - name: Medição e expansão
+        mode: agent
+        activities: [instrumentação dos indicadores, análise dos resultados, identificação de melhorias, priorização das próximas áreas, consolidação do plano de escala]
+    deliverables: [modelo operacional de IA, estrutura de governança inicial, catálogo de casos de uso, ambientes configurados, biblioteca de prompts, assistentes e workflows, playbooks por área, guias de utilização, materiais de treinamento, modelo de champions, dashboard executivo, dashboard de adoção, backlog de evolução, plano de expansão]
+    definition_of_done: [o modelo operacional foi documentado, as ferramentas previstas foram configuradas, os acessos foram validados, os casos de uso foram implantados, os fluxos foram testados pelas áreas, os usuários responsáveis foram treinados, a governança foi aplicada, os indicadores foram disponibilizados, os riscos conhecidos foram registrados, o plano de expansão foi consolidado, o handover foi realizado]
+
+  - code: ai_workforce_productivity_accelerator
+    display_name: AI Workforce Productivity Accelerator
+    description: Programa voltado à transformação das atividades corporativas por meio de ferramentas de IA generativa.
+    journey_stage: Acelerar adoção
+    category: productivity_program
+    duration_label: 6–10 semanas
+    cadence: one_off
+    component_codes: [ai_enterprise_launchpad]
+    team: [engagement_planner, productivity_specialist, enablement_handover_specialist, deliverable_quality_curator]
+    process:
+      - name: Mapeamento das funções
+        mode: human
+        activities: [identificação das funções prioritárias, levantamento das atividades, análise do esforço, identificação de tarefas repetitivas, identificação de atividades cognitivas, levantamento das ferramentas utilizadas]
+      - name: Identificação dos casos de produtividade
+        mode: agent
+        activities: [elaboração de relatórios, preparação de reuniões, análise de documentos, geração de comunicações, criação de apresentações, análise de contratos, apoio a vendas, análise de planilhas, consolidação de informações, preparação de planos de ação]
+      - name: Desenho dos fluxos assistidos
+        mode: agent
+        activities: [descrição da atividade, entrada necessária, ferramenta utilizada, instruções, pontos de validação humana, resultado esperado, critérios de qualidade]
+      - name: Construção dos ativos
+        mode: agent
+        activities: [prompts, templates, assistentes, agentes simples, workflows, bibliotecas por função, exemplos aprovados]
+      - name: Habilitação dos usuários
+        mode: human
+        activities: [treinamento contextualizado, sessões práticas, guias de utilização, office hours, criação da rede de champions, coleta de feedback]
+      - name: Acompanhamento da adoção
+        mode: agent
+        activities: [monitoramento do uso, análise dos casos mais utilizados, identificação de barreiras, melhoria dos ativos, atualização dos playbooks]
+    deliverables: [mapa de atividades por função, catálogo de casos de uso, biblioteca de prompts, assistentes por função, templates, workflows, playbooks, guias rápidos, materiais de capacitação, repositório de boas práticas, plano de comunicação, modelo de champions, dashboard de uso, backlog de melhorias]
+    definition_of_done: [as funções previstas foram mapeadas, os casos de uso foram documentados, os ativos foram construídos, os fluxos foram validados pelas áreas, a biblioteca foi publicada, os usuários-chave foram habilitados, os responsáveis pelos ativos foram definidos, os indicadores de adoção foram configurados, os riscos e limitações foram documentados, o backlog de evolução foi entregue]
+
+  - code: ai_engineering_productivity_accelerator
+    display_name: AI Engineering Productivity Accelerator
+    description: Programa de integração da inteligência artificial ao ciclo de desenvolvimento de software.
+    journey_stage: Acelerar adoção
+    category: specialized_program
+    duration_label: 6–10 semanas
+    cadence: one_off
+    component_codes: [engineering_productivity_accelerator]
+    team: [engagement_planner, productivity_specialist, governance_risk_specialist, deliverable_quality_curator]
+    process:
+      - name: Diagnóstico da engenharia
+        mode: agent
+        activities: [planejamento, requisitos, arquitetura, desenvolvimento, testes, revisão, segurança, documentação, deployment, sustentação, observabilidade]
+      - name: Identificação dos casos de uso
+        mode: agent
+        activities: [refinamento de requisitos, geração de critérios de aceite, apoio à arquitetura, geração de código, revisão de código, criação de testes, análise de falhas, documentação, modernização de legado, análise de vulnerabilidades, onboarding técnico]
+      - name: Definição dos padrões
+        mode: agent
+        activities: [ferramentas autorizadas, tipos de dados permitidos, práticas de revisão, supervisão humana, critérios de qualidade, registro de evidências, requisitos de segurança]
+      - name: Configuração dos ambientes
+        mode: integration
+        activities: [ativação das ferramentas, configuração dos acessos, definição das políticas, integração com os repositórios, configuração dos quality gates, preparação dos ambientes de teste]
+      - name: Criação dos playbooks
+        mode: agent
+        activities: [product owners, analistas, arquitetos, desenvolvedores, testadores, revisores, DevOps, segurança]
+      - name: Validação dos fluxos
+        mode: technical_run
+        activities: [execução de casos reais, comparação com o processo atual, avaliação de qualidade, coleta de métricas, registro das limitações, ajustes nos padrões]
+    deliverables: [assessment do processo de engenharia, baseline dos indicadores, catálogo de casos de uso, política de uso de IA na engenharia, padrões de segurança, playbooks por função, prompts e agentes especializados, templates técnicos, quality gates, ambientes configurados, materiais de capacitação, dashboard de engenharia, backlog de expansão]
+    definition_of_done: [o processo de engenharia foi analisado, os casos de uso foram definidos, os ambientes foram configurados, os padrões de segurança foram aplicados, os playbooks foram publicados, os fluxos foram testados em demandas reais, os quality gates foram validados, os indicadores foram instrumentados, os usuários-chave foram treinados, os riscos e limitações foram documentados, o processo operacional foi transferido à equipe responsável]
+
+  - code: ai_use_case_pilot_sprint
+    display_name: AI Use Case Pilot
+    description: Serviço destinado a validar um caso de uso específico antes de sua transformação em solução produtiva.
+    journey_stage: Validar casos de uso
+    category: validation_service
+    duration_label: 4–8 semanas
+    cadence: one_off
+    component_codes: [rapid_mvp_factory]
+    team: [engagement_planner, solution_platform_architect, deliverable_quality_curator]
+    process:
+      - name: Definição do problema
+        mode: human
+        activities: [descrição da necessidade, identificação dos usuários, mapeamento da jornada atual, definição das entradas e saídas, estabelecimento dos critérios de sucesso, identificação das restrições]
+      - name: Desenho da solução
+        mode: agent
+        activities: [arquitetura, componentes, dados, modelos, integrações, controles, pontos de supervisão humana, estratégia de avaliação]
+      - name: Preparação dos dados
+        mode: integration
+        activities: [identificação das fontes, extração, organização, normalização, classificação, controle de acesso, construção do dataset de teste]
+      - name: Construção do piloto
+        mode: technical_run
+        activities: [configuração das ferramentas, criação dos fluxos, construção dos prompts, desenvolvimento das integrações previstas, implementação da interface, implementação dos controles]
+      - name: Avaliação
+        mode: technical_run
+        activities: [testes funcionais, avaliação de precisão, avaliação de grounding, testes de segurança, avaliação de experiência, análise dos custos, identificação das limitações]
+      - name: Recomendação de evolução
+        mode: agent
+        activities: [consolidação dos resultados, identificação das lacunas, definição do backlog produtivo, recomendação de continuidade, proposta de arquitetura futura]
+    deliverables: [documento do problema, desenho funcional, arquitetura da solução, piloto funcional, dataset de avaliação, integrações previstas, relatório de testes, relatório de segurança, relatório de qualidade, demonstração executiva, backlog produtivo, mapa de riscos, recomendação de evolução]
+    definition_of_done: [o fluxo previsto funciona de ponta a ponta, os dados definidos estão disponíveis, as integrações previstas foram validadas, os testes foram executados, os resultados foram registrados, os riscos e limitações foram documentados, a demonstração foi realizada, o backlog produtivo foi construído, a recomendação de continuidade foi formalizada]
+    valid_terminal_outcomes: [viable, infeasible_with_evidence]
+
+  - code: ai_office_as_a_service
+    display_name: AI Office as a Service
+    description: Serviço gerenciado responsável pela coordenação contínua da estratégia, governança, portfólio, adoção e evolução da inteligência artificial.
+    journey_stage: Operar continuamente
+    category: managed_service
+    duration_label: Recorrente mensal
+    cadence: monthly
+    component_codes: [ai_office]
+    team: [ai_office_manager, governance_risk_specialist, process_value_analyst, deliverable_quality_curator]
+    process:
+      - name: Gestão do portfólio
+        mode: agent
+        activities: [recebimento de novas demandas, avaliação das oportunidades, classificação dos casos, atualização das prioridades, acompanhamento das iniciativas, controle das dependências]
+      - name: Governança
+        mode: agent
+        activities: [avaliação dos riscos, análise de novos fornecedores, atualização das políticas, acompanhamento das exceções, registro das decisões, acompanhamento dos incidentes]
+      - name: Adoção
+        mode: human
+        activities: [suporte aos champions, manutenção da biblioteca, atualização dos playbooks, sessões de orientação, comunicação de boas práticas, análise das barreiras de adoção]
+      - name: Gestão de valor
+        mode: agent
+        activities: [acompanhamento dos indicadores, análise dos benefícios, consolidação dos resultados, identificação de oportunidades, recomendação de correções, apresentação executiva]
+      - name: Evolução
+        mode: agent
+        activities: [atualização do roadmap, identificação de novas capacidades, acompanhamento de fornecedores, avaliação de ferramentas, proposição de novas iniciativas]
+    deliverables: [backlog corporativo de IA, portfólio priorizado, fichas de avaliação, dashboard executivo, relatório de adoção, relatório de riscos, atas de governança, registro de decisões, plano de ações, atualização do roadmap, materiais de capacitação, recomendações executivas]
+    definition_of_done: [as demandas recebidas foram avaliadas, o backlog foi atualizado, os riscos foram revisados, as decisões foram registradas, os indicadores foram consolidados, as ações foram atribuídas, as pendências críticas foram escaladas, o relatório executivo foi apresentado, o plano do próximo ciclo foi definido]
+    homologation_cycles: 2
+
+  - code: ai_adoption_kit_governance_cockpit
+    display_name: AI Adoption Kit & Governance Cockpit
+    description: Produto digital que centraliza os ativos necessários para adoção, governança e gestão corporativa da inteligência artificial.
+    journey_stage: Implantar capacidades e operar continuamente
+    category: digital_product
+    duration_label: 2–4 semanas
+    cadence: one_off
+    component_codes: [responsible_ai_governance]
+    team: [cockpit_configurator, governance_risk_specialist, enablement_handover_specialist, deliverable_quality_curator]
+    process:
+      - name: Definição da estrutura
+        mode: agent
+        activities: [organização dos módulos, definição dos perfis, definição das permissões, identificação dos conteúdos, definição dos fluxos de atualização]
+      - name: Configuração do repositório
+        mode: integration
+        activities: [criação das áreas, publicação dos conteúdos, configuração dos acessos, aplicação da identidade visual, organização da navegação]
+      - name: Configuração dos ativos
+        mode: agent
+        activities: [políticas, templates, checklists, matrizes, biblioteca de prompts, catálogo de casos, calculadora de valor, materiais de capacitação]
+      - name: Configuração dos dashboards
+        mode: integration
+        activities: [indicadores, fontes de dados, visões executivas, visões operacionais, alertas, registros de decisão]
+      - name: Habilitação dos administradores
+        mode: human
+        activities: [treinamento, documentação, processo de atualização, controle de versões, modelo de suporte]
+    deliverables: [repositório corporativo configurado, estrutura de navegação, perfis e acessos, políticas, templates, matriz de riscos, catálogo de casos de uso, biblioteca de prompts, calculadora de ROI, checklists, dashboards, documentação de administração, guia de atualização, treinamento dos administradores]
+    definition_of_done: [o repositório está acessível, os conteúdos previstos estão publicados, os perfis e permissões foram validados, os templates estão disponíveis, os dashboards estão funcionando, os administradores foram habilitados, o processo de atualização foi documentado, a documentação operacional foi entregue]

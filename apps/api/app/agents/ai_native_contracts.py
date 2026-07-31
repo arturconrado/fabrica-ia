@@ -17,6 +17,7 @@ MAX_UNIT_ATTEMPTS = 3
 MAX_UNIT_CONTINUATIONS = 2
 SAFE_ARTIFACT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 SAFE_UNIT_KEY = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,95}$")
+SAFE_SPEC_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$")
 
 
 def stable_hash(value: Any) -> str:
@@ -83,6 +84,12 @@ class ContextPolicy(BaseModel):
     artifact_views: dict[str, ArtifactViewPolicy] = Field(default_factory=dict)
     min_rag_relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
     tokenizer_model: str = Field(default="", max_length=200)
+    unit_context_mode: Literal["full", "compact"] = "full"
+    plan_input_budget_tokens: int = Field(default=0, ge=0, le=128_000)
+    unit_input_budget_tokens: int = Field(default=0, ge=0, le=128_000)
+    finalize_input_budget_tokens: int = Field(default=0, ge=0, le=128_000)
+    max_unit_references: int = Field(default=12, ge=1, le=40)
+    compact_spec_enabled: bool = False
 
     @field_validator("per_kind_token_budgets")
     @classmethod
@@ -151,6 +158,49 @@ class ContextBundle(BaseModel):
         return self
 
 
+class UnitContextView(BaseModel):
+    """Tenant-safe provider payload for one bounded output unit.
+
+    The complete ContextBundle remains persisted for audit and replay. This view
+    intentionally omits tenant/run identifiers and carries only the evidence a
+    single unit is allowed to consume.
+    """
+
+    version: str = "compact-unit-context-v1"
+    mode: Literal["full", "compact"] = "compact"
+    action: Literal["plan", "execute", "finalize"]
+    unit_key: str
+    compact_spec: dict[str, Any] = Field(default_factory=dict)
+    references: list[ContextReference] = Field(default_factory=list, max_length=40)
+    dependency_outputs: list[dict[str, Any]] = Field(default_factory=list, max_length=16)
+    selection_reasons: dict[str, str] = Field(default_factory=dict)
+    source_context_hash: str
+    source_input_tokens: int = Field(default=0, ge=0)
+    estimated_input_tokens: int = Field(default=0, ge=0)
+    saved_input_tokens: int = Field(default=0, ge=0)
+    input_budget_tokens: int = Field(default=0, ge=0)
+    input_hash: str = ""
+
+    @model_validator(mode="after")
+    def calculate_metrics(self) -> "UnitContextView":
+        payload = {
+            "version": self.version,
+            "mode": self.mode,
+            "action": self.action,
+            "unit_key": self.unit_key,
+            "compact_spec": self.compact_spec,
+            "references": [reference.model_dump(mode="json") for reference in self.references],
+            "dependency_outputs": self.dependency_outputs,
+            "source_context_hash": self.source_context_hash,
+        }
+        self.estimated_input_tokens = estimate_tokens(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+        )
+        self.saved_input_tokens = max(0, self.source_input_tokens - self.estimated_input_tokens)
+        self.input_hash = stable_hash(payload)
+        return self
+
+
 class ArtifactOutput(BaseModel):
     model_config = {"extra": "forbid"}
     name: str
@@ -205,6 +255,9 @@ class OutputUnitDescriptor(BaseModel):
     targets: list[str] = Field(default_factory=list, max_length=4)
     order: int = Field(ge=0, le=31)
     dependencies: list[str] = Field(default_factory=list, max_length=16)
+    requirement_refs: list[str] = Field(default_factory=list, max_length=40)
+    invariant_refs: list[str] = Field(default_factory=list, max_length=40)
+    verification_tests: list[str] = Field(default_factory=list, max_length=20)
     input_budget_tokens: int = Field(default=0, ge=0, le=128_000)
     output_budget_tokens: int = Field(ge=128, le=32_000)
 
@@ -224,6 +277,16 @@ class OutputUnitDescriptor(BaseModel):
             raise ValueError("dependencies must reference stable unit keys")
         if len(set(normalized)) != len(normalized):
             raise ValueError("unit dependencies must be unique")
+        return normalized
+
+    @field_validator("requirement_refs", "invariant_refs", "verification_tests")
+    @classmethod
+    def validate_spec_refs(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip() for item in value if item.strip()]
+        if any(not SAFE_SPEC_REF.fullmatch(item) for item in normalized):
+            raise ValueError("spec and verification references must be stable identifiers without whitespace")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("spec and verification references must be unique")
         return normalized
 
     @field_validator("targets")
@@ -394,6 +457,24 @@ class TestRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=2000)
 
 
+class PonytailFinding(BaseModel):
+    """Evidence-backed minimality finding emitted by the Code Reviewer."""
+
+    model_config = {"extra": "forbid"}
+    tag: Literal["delete", "stdlib", "native", "yagni", "shrink", "root_cause"]
+    path: str
+    line: int = Field(default=0, ge=0, le=2_000_000)
+    finding: str = Field(min_length=1, max_length=2000)
+    replacement: str = Field(min_length=1, max_length=2000)
+    estimated_lines_removed: int = Field(default=0, ge=0, le=100_000)
+    dependency_removed: Optional[str] = Field(default=None, max_length=200)
+
+    @field_validator("path")
+    @classmethod
+    def validate_generated_path(cls, value: str) -> str:
+        return _safe_workspace_path(value)
+
+
 class HandoffOutput(BaseModel):
     model_config = {"extra": "forbid"}
     to: str
@@ -422,6 +503,7 @@ class AgentStepResult(BaseModel):
     file_operations: list[FileOperation] = Field(default_factory=list, max_length=MAX_FILES_PER_STEP)
     requirements: list[RequirementOutput] = Field(default_factory=list, max_length=80)
     test_requests: list[TestRequest] = Field(default_factory=list, max_length=8)
+    minimality_findings: list[PonytailFinding] = Field(default_factory=list, max_length=80)
     risks: list[str] = Field(default_factory=list, max_length=40)
     citations: list[str] = Field(default_factory=list, max_length=80)
     handoff: Optional[HandoffOutput] = None
@@ -473,19 +555,34 @@ class EngineeringStepResult(RiskArtifactStepResult):
     file_operations: list[FileOperation] = Field(default_factory=list, max_length=MAX_FILES_PER_STEP)
 
 
+class WorkspaceAuthorStepResult(RiskArtifactStepResult):
+    """Bounded authoring contract used only by workflow nodes with path ownership."""
+
+    file_operations: list[FileOperation] = Field(default_factory=list, max_length=MAX_FILES_PER_STEP)
+    test_requests: list[TestRequest] = Field(default_factory=list, max_length=8)
+
+
 class QAStepResult(RiskArtifactStepResult):
     test_requests: list[TestRequest] = Field(default_factory=list, max_length=8)
 
 
-def result_contract_for_node(node_id: str) -> type[BaseModel]:
+class CodeReviewStepResult(RiskArtifactStepResult):
+    minimality_findings: list[PonytailFinding] = Field(default_factory=list, max_length=80)
+
+
+def result_contract_for_node(node_id: str, *, workspace_author: bool = False) -> type[BaseModel]:
+    if workspace_author:
+        return WorkspaceAuthorStepResult
     if node_id in {"Acceptance Criteria Architect", "Scope Governor", "Product Manager"}:
         return RequirementsArtifactStepResult
     if node_id == "Engineer":
         return EngineeringStepResult
     if node_id == "QA Engineer":
         return QAStepResult
+    if node_id == "Code Reviewer":
+        return CodeReviewStepResult
     if node_id in {
-        "UX UI Designer", "Architect", "Data Architect", "API Contract Engineer", "Code Reviewer",
+        "UX UI Designer", "Architect", "Data Architect", "API Contract Engineer",
         "Visual QA Agent", "Accessibility QA Agent", "Security Engineer", "DevOps Engineer", "Quality Governor",
     }:
         return RiskArtifactStepResult

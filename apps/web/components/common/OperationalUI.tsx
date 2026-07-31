@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { AlertCircle, Inbox, LoaderCircle } from "lucide-react";
+import { AlertCircle, Inbox, LoaderCircle, RotateCcw } from "lucide-react";
 
 
 export function PageHeader({ eyebrow, title, description, actions }: { eyebrow?: string; title: string; description?: string; actions?: ReactNode }) {
@@ -21,27 +21,47 @@ export function Surface({ children, className = "" }: { children: ReactNode; cla
 
 export function LoadingState({ label = "Carregando dados reais…" }: { label?: string }) {
   return (
-    <div className="panel flex min-h-40 items-center justify-center gap-3 p-6 text-sm text-[rgb(var(--muted))]" role="status">
-      <LoaderCircle className="h-5 w-5 animate-spin text-blue-400" aria-hidden="true" /> {label}
+    <div className="panel min-h-52 overflow-hidden p-6" role="status" aria-live="polite">
+      <div className="flex items-center gap-3">
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
+          <LoaderCircle className="h-5 w-5 animate-spin text-blue-400" aria-hidden="true" />
+        </span>
+        <div>
+          <p className="text-sm font-semibold text-ink">{label}</p>
+          <p className="mt-1 text-xs text-[rgb(var(--muted))]">Estamos consultando somente os dados autorizados deste cliente.</p>
+        </div>
+      </div>
+      <div className="mt-6 grid gap-3 sm:grid-cols-3" aria-hidden="true">
+        <div className="skeleton h-20 rounded-xl" />
+        <div className="skeleton h-20 rounded-xl" />
+        <div className="skeleton h-20 rounded-xl" />
+      </div>
     </div>
   );
 }
 
-export function ErrorState({ message }: { message: string }) {
+export function ErrorState({ message, onRetry, retryLabel = "Tentar novamente" }: { message: string; onRetry?: () => void; retryLabel?: string }) {
   return (
-    <div className="panel flex min-h-32 items-start gap-3 border-red-500/40 p-5 text-sm text-red-300" role="alert">
-      <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
-      <div><div className="font-semibold">Não foi possível carregar</div><p className="mt-1 text-red-200/80">{message}</p></div>
+    <div className="panel flex min-h-36 items-start gap-4 border-red-500/40 p-5 text-sm" role="alert">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-300">
+        <AlertCircle className="h-5 w-5" aria-hidden="true" />
+      </span>
+      <div className="min-w-0">
+        <div className="font-semibold text-ink">Esta informação não carregou</div>
+        <p className="mt-1 max-w-3xl break-words leading-6 text-red-200/80">{message}</p>
+        <p className="mt-2 text-xs text-[rgb(var(--muted))]">Você pode tentar novamente sem recarregar ou perder o que já estava na tela.</p>
+        {onRetry ? <button type="button" className="mt-4 inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-red-400/30 px-4 font-semibold text-red-100 transition-colors duration-200 hover:bg-red-500/10" onClick={onRetry}><RotateCcw className="h-4 w-4" />{retryLabel}</button> : null}
+      </div>
     </div>
   );
 }
 
-export function EmptyState({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
+export function EmptyState({ title, description, action }: { title: string; description?: string; action?: ReactNode }) {
   return (
     <div className="flex min-h-44 flex-col items-center justify-center rounded-xl border border-dashed border-line p-6 text-center">
       <Inbox className="h-7 w-7 text-[rgb(var(--muted))]" aria-hidden="true" />
       <h2 className="mt-3 text-sm font-semibold text-ink">{title}</h2>
-      <p className="mt-1 max-w-lg text-sm text-[rgb(var(--muted))]">{description}</p>
+      {description ? <p className="mt-1 max-w-lg text-sm text-[rgb(var(--muted))]">{description}</p> : null}
       {action ? <div className="mt-4">{action}</div> : null}
     </div>
   );

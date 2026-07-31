@@ -45,7 +45,8 @@ export async function exchangeToken(parameters: URLSearchParams): Promise<TokenS
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: parameters,
-    cache: "no-store"
+    cache: "no-store",
+    signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) {
     throw new Error(`OIDC token exchange failed (${response.status})`);

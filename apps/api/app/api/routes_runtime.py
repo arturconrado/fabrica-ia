@@ -6,11 +6,31 @@ from app.db.session import get_db
 from app.models import McpToolInvocation, ModelCall, PlatformReadinessEvaluation, SandboxExecution, ToolPolicy
 from app.observability.slo import SLOCalculator
 from app.providers.mcp_tool_provider import McpPolicyError, McpToolExecutor, McpToolRegistry
+from app.plugins import FactoryPluginRuntime
+from app.plugins.ponytail import PonytailPolicy
 from app.schemas import McpToolCallCreate, ToolPolicyCreate
+from app.schemas.operational import ProductionPluginsResponse
 from app.services.serialization import model_to_dict, models_to_dict
 
 router = APIRouter(tags=["runtime"])
 get_current_principal = require_roles("owner", "super_admin", "tenant_admin", "engagement_manager", "consultant", "admin", "operator")
+
+
+@router.get("/api/v1/admin/plugins", response_model=ProductionPluginsResponse)
+def production_plugins(
+    principal: Principal = Depends(require_roles("owner", "super_admin", "tenant_admin", "admin", "operator")),
+):
+    return {
+        "plugins": FactoryPluginRuntime().manifests(),
+        "ponytail_help": PonytailPolicy.help_payload(),
+        "security_boundary": {
+            "direct_database_access": False,
+            "direct_secret_access": False,
+            "arbitrary_shell": False,
+            "automatic_updates": False,
+            "tenant_content_in_global_prompt": False,
+        },
+    }
 
 
 @router.get("/api/v1/operator/slo")
@@ -20,7 +40,7 @@ def operator_slo(principal: Principal = Depends(get_current_principal), db: Sess
 
 @router.get("/api/v1/admin/platform-readiness")
 def platform_readiness(
-    principal: Principal = Depends(require_roles("owner", "super_admin")),
+    principal: Principal = Depends(require_roles("owner", "super_admin", "release_validator")),
     db: Session = Depends(get_db),
 ):
     evaluations = db.query(PlatformReadinessEvaluation).order_by(PlatformReadinessEvaluation.created_at.desc()).limit(20).all()

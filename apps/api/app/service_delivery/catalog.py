@@ -1,5 +1,8 @@
 import hashlib
 import json
+import re
+from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -182,11 +185,136 @@ AGENT_TEMPLATES: list[dict[str, Any]] = [
     {"code": "ai_office_manager", "name": "AI Office Manager", "purpose": "Coordena backlog, comitê, riscos, ações e valor do ciclo recorrente.", "model_role": "fast", "tools": ["create_artifact", "read_tenant_knowledge"]},
     {"code": "deliverable_quality_curator", "name": "Deliverable Quality Curator", "purpose": "Verifica evidências e Definition of Done sem substituir aprovação humana.", "model_role": "reasoning", "tools": ["read_artifact", "read_evidence"]},
     {"code": "agent_architect", "name": "Agent Architect", "purpose": "Propõe agentes limitados, schemas e políticas para lacunas aprovadas.", "model_role": "reasoning", "tools": ["propose_agent_definition"]},
+    {"code": "solution_platform_architect", "name": "Solution & Platform Architect", "purpose": "Desenha arquiteturas, plataformas, integrações e capacidades operacionais de IA.", "model_role": "reasoning", "tools": ["create_artifact", "read_tenant_knowledge"]},
+    {"code": "enablement_handover_specialist", "name": "Enablement & Handover Specialist", "purpose": "Estrutura treinamento, transferência operacional e evidências de habilitação.", "model_role": "reasoning", "tools": ["create_artifact", "read_tenant_knowledge"]},
+    {"code": "cockpit_configurator", "name": "Governance Cockpit Configurator", "purpose": "Configura módulos, conteúdos, permissões e dashboards tenant-scoped do cockpit.", "model_role": "reasoning", "tools": ["create_artifact", "read_tenant_knowledge"]},
 ]
 
 
 def _checksum(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _key(value: str, index: int) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+    return f"d{index:02d}_{normalized[:80]}"
+
+
+def _formats(title: str) -> list[str]:
+    lowered = title.casefold()
+    if any(word in lowered for word in ("apresentação", "demonstração", "treinamento", "capacitação")):
+        return ["markdown", "pptx"]
+    if any(word in lowered for word in ("matriz", "inventário", "backlog", "roadmap", "dashboard", "indicador", "dataset", "catálogo", "calculadora", "ranking", "mapa")):
+        return ["markdown", "csv", "xlsx"]
+    if any(word in lowered for word in ("piloto funcional", "assistentes e workflows", "repositório corporativo configurado")):
+        return ["markdown", "json", "zip"]
+    return ["markdown", "docx"]
+
+
+def _execution_mode(offering_code: str, title: str) -> str:
+    lowered = title.casefold()
+    if any(word in lowered for word in ("treinamento", "capacitação", "demonstração", "handover", "apresentação", "comitê")):
+        return "human"
+    if any(word in lowered for word in ("ambiente configurado", "plataforma configurada", "repositório configurado", "perfis e acessos", "integrações previstas")):
+        return "integration"
+    if offering_code == "ai_use_case_pilot_sprint" and any(
+        word in lowered
+        for word in ("piloto funcional", "dataset", "arquitetura da solução", "relatório de testes", "relatório de segurança", "relatório de qualidade")
+    ):
+        return "technical_run"
+    return "agent"
+
+
+def _portfolio_v2() -> dict[str, Any]:
+    path = Path(__file__).with_name("portfolio_v2.yaml")
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if payload.get("version") != "2.0" or len(payload.get("offerings") or []) != 8:
+        raise RuntimeError("portfolio_v2.yaml must define exactly eight offerings at version 2.0")
+    corporate = list(payload.get("corporate_definition_of_done") or [])
+    if len(corporate) != 10:
+        raise RuntimeError("Portfolio v2 must define the ten corporate Definition of Done checks")
+    for offering in payload["offerings"]:
+        required = {"code", "display_name", "description", "process", "deliverables", "definition_of_done", "team"}
+        if not required.issubset(offering) or not offering["process"] or not offering["deliverables"]:
+            raise RuntimeError(f"Incomplete portfolio v2 offering: {offering.get('code', 'unknown')}")
+        offering["deliverable_templates"] = [
+            {
+                "key": _key(str(title), index),
+                "title": str(title),
+                "audience": "client",
+                "responsible": next((role for role in offering["team"] if role != "engagement_planner"), offering["team"][0]),
+                "approver_role": "engagement_manager",
+                "required_sections": ["objetivo", "conteúdo", "evidências", "riscos e limitações", "próximos passos"],
+                "required_evidence": ["artifact_ref", "source_refs", "human_review"],
+                "formats": _formats(str(title)),
+                "execution_mode": _execution_mode(str(offering["code"]), str(title)),
+                "acceptance_criteria": ["conteúdo contextualizado ao contrato", "evidências rastreáveis", "formato utilizável e editável"],
+            }
+            for index, title in enumerate(offering.pop("deliverables"), start=1)
+        ]
+        offering["corporate_definition_of_done"] = corporate
+        offering["external_constraints"] = list(payload.get("external_constraints") or [])
+        offering["portfolio_commitment"] = str(payload.get("commitment") or "")
+    return payload
+
+
+def _portfolio_v21() -> dict[str, Any]:
+    """Derive the candidate catalog without mutating the immutable 2.0 payload."""
+    payload = deepcopy(_portfolio_v2())
+    payload["version"] = "2.1"
+    payload["status"] = "candidate"
+    payload["technical_workflow_version"] = "2.14.0"
+    groups_by_offering = {
+        "ai_use_case_pilot_sprint": {
+            "key": "software_product",
+            "title": "Construir e validar o produto de software",
+            "anchor_title": "piloto funcional",
+            "member_titles": [
+                "arquitetura da solução",
+                "piloto funcional",
+                "dataset de avaliação",
+                "relatório de testes",
+                "relatório de segurança",
+                "relatório de qualidade",
+            ],
+        },
+        "ai_engineering_productivity_accelerator": {
+            "key": "engineering_validation",
+            "title": "Executar validação técnica de engenharia",
+            "anchor_title": "quality gates",
+            "member_titles": ["templates técnicos", "quality gates"],
+        },
+    }
+    for offering in payload["offerings"]:
+        group = groups_by_offering.get(str(offering["code"]))
+        if not group:
+            offering["technical_run_groups"] = []
+            continue
+        templates_by_title = {
+            str(template["title"]).casefold(): template
+            for template in offering["deliverable_templates"]
+        }
+        missing = [
+            title for title in group["member_titles"]
+            if title.casefold() not in templates_by_title
+        ]
+        if missing:
+            raise RuntimeError(
+                f"Portfolio v2.1 technical group {group['key']} has unknown deliverables: {missing}"
+            )
+        member_keys: list[str] = []
+        for title in group["member_titles"]:
+            template = templates_by_title[title.casefold()]
+            template["execution_mode"] = "technical_run"
+            template["technical_group"] = group["key"]
+            member_keys.append(str(template["key"]))
+        offering["technical_run_groups"] = [{
+            "key": group["key"],
+            "title": group["title"],
+            "anchor_template_key": templates_by_title[group["anchor_title"].casefold()]["key"],
+            "deliverable_template_keys": member_keys,
+        }]
+    return payload
 
 
 def ensure_service_catalog(db: Session) -> None:
@@ -213,6 +341,8 @@ def ensure_service_catalog(db: Session) -> None:
                     offering_id=offering.id,
                     version="1.0",
                     status="active",
+                    display_name=definition["name"],
+                    description=definition["description"],
                     duration_label=definition["duration_label"],
                     cadence=definition["cadence"],
                     definition_json=payload,
@@ -221,6 +351,47 @@ def ensure_service_catalog(db: Session) -> None:
             )
         elif version.checksum != checksum:
             raise RuntimeError(f"Immutable offering version drift detected for {definition['code']}@1.0")
+        elif not version.display_name:
+            version.display_name = definition["name"]
+            version.description = definition["description"]
+
+    for portfolio in (_portfolio_v2(), _portfolio_v21()):
+        portfolio_version = str(portfolio["version"])
+        for definition in portfolio["offerings"]:
+            offering = db.query(ServiceOffering).filter_by(code=definition["code"]).first()
+            if not offering:
+                raise RuntimeError(
+                    f"Portfolio v{portfolio_version} references unknown offering code: {definition['code']}"
+                )
+            payload = {
+                **definition,
+                "portfolio_journey": portfolio["journey"],
+                "portfolio_version": portfolio_version,
+                **(
+                    {"technical_workflow_version": portfolio["technical_workflow_version"]}
+                    if portfolio.get("technical_workflow_version")
+                    else {}
+                ),
+            }
+            checksum = _checksum(payload)
+            version = db.query(OfferingVersion).filter_by(
+                offering_id=offering.id,
+                version=portfolio_version,
+            ).first()
+            if not version:
+                db.add(
+                    OfferingVersion(
+                        id=new_id(), offering_id=offering.id, version=portfolio_version,
+                        status=str(portfolio.get("status") or "candidate"),
+                        display_name=definition["display_name"], description=definition["description"],
+                        duration_label=definition["duration_label"], cadence=definition["cadence"],
+                        definition_json=payload, checksum=checksum,
+                    )
+                )
+            elif version.checksum != checksum:
+                raise RuntimeError(
+                    f"Immutable offering version drift detected for {definition['code']}@{portfolio_version}"
+                )
 
     for definition in AGENT_TEMPLATES:
         checksum = _checksum(definition)
@@ -274,7 +445,7 @@ def ensure_tenant_agent_catalog(db: Session, tenant_id: str) -> None:
             "system_prompt": f"Você é {template.name}. {template.purpose} Use somente contexto autorizado do tenant e produza JSON estruturado.",
             "output_schema": {"type": "object", "properties": {"summary": {"type": "string"}, "artifacts": {"type": "array", "items": {"type": "object"}}}, "required": ["summary", "artifacts"]},
             "context_policy": {
-                "version": "2.13.0",
+                "version": "2.13.2",
                 "max_rag_chunks": 4,
                 "input_budget_tokens": 12000,
                 "max_selected_references": 8,

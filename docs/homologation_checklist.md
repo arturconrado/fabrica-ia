@@ -4,10 +4,11 @@
 
 - [x] Banco fresco inicia sem tenant, cliente, projeto, crédito, run, agent ou histórico demonstrativo.
 - [x] API cobre cinco tenants, RLS/RAG, artifacts, review, papéis, topologia e XP idempotente.
-- [x] Next.js compila as 28 rotas e os tipos são gerados do OpenAPI.
+- [x] Next.js compila as 33 rotas e os tipos são gerados do OpenAPI.
 - [x] Compose base e VPS passam em `config` com configuração válida.
 - [x] Migration fresca `0006_ai_native_workflow_v2` passa upgrade e downgrade.
-- [x] Playwright consolidado passa PKCE, refresh, menus, ações, zero-mock, axe, teclado, reduced motion e quatro breakpoints (`4 passed, 1 skipped`).
+- [x] Playwright consolidado passa PKCE, refresh, menus, ações, zero-mock, axe,
+  teclado, reduced motion e quatro breakpoints (`10 passed`).
 - [ ] Playwright do cockpit passa com `ASF_TEST_COMPLETED_RUN_ID` de uma run contratada deste corte.
 
 ## Segurança e dados

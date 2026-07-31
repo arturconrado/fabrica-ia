@@ -658,6 +658,7 @@ async def create_asf_run(
         tenant_id=principal.tenant_id,
         opportunity_id=opportunity.id,
     ).first()
+    policy_version = settings.ai_native_policy_version
     context_manifest = {
         "mvp_run_id": mvp_run.id,
         "mvp_spec_id": spec.id,
@@ -679,9 +680,9 @@ async def create_asf_run(
         },
         "knowledge_base_ids": list((spec.scope_json or {}).get("knowledge_base_ids") or []),
         "retry_of_run_id": retry_of_run_id,
-        "workflow_version": "2.13.0",
-        "context_policy_version": "2.13.0",
-        "cost_policy_version": "2.13.0",
+        "workflow_version": policy_version,
+        "context_policy_version": policy_version,
+        "cost_policy_version": policy_version,
     }
     demand = (
         f"Approved AI-native product mission for opportunity {opportunity.id}: {opportunity.title}.\n"

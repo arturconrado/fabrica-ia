@@ -1,0 +1,42 @@
+version: 2.14.0
+extends: software_factory_ai_native_v2_13_2_policy.yaml
+description: Candidate workflow for bounded multi-discipline source authorship and QA-owned tests on the assisted commercial stack.
+evaluation:
+  baseline_workflow_version: 2.13.2
+  dataset: homologation/cases/portfolio-v2/realistic-agentic-journeys.json
+  repetitions: 3
+  promotion: human_only
+  max_cost_token_regression_ratio: 1.2
+node_defaults:
+  workspace_ownership_enforced: true
+edge_additions:
+  - { from: QA Engineer, to: QA Engineer, condition: tests_invalid, max_iterations: 1 }
+  - { from: Visual QA Agent, to: Engineer, condition: blocked, max_iterations: 2 }
+  - { from: Accessibility QA Agent, to: Engineer, condition: blocked, max_iterations: 2 }
+  - { from: Security Engineer, to: Engineer, condition: blocked, max_iterations: 2 }
+nodes:
+  Architect:
+    output_strategy: atomic
+    allowed_tools: [write_workspace]
+    workspace_ownership: [generated_app/architecture/**]
+  Data Architect:
+    output_strategy: atomic
+    allowed_tools: [write_workspace]
+    workspace_ownership: [generated_app/backend/migrations/**, generated_app/backend/schemas/**]
+  API Contract Engineer:
+    output_strategy: atomic
+    allowed_tools: [write_workspace]
+    workspace_ownership: [generated_app/contracts/**]
+  Engineer:
+    allowed_tools: [write_workspace]
+    qa_owns_tests: true
+    workspace_ownership: [generated_app/backend/**, generated_app/frontend/**, generated_app/README.md]
+  QA Engineer:
+    allowed_tools: [read_workspace, write_workspace, backend_tests, frontend_tests, frontend_build]
+    workspace_ownership: [generated_app/backend/tests/**, generated_app/frontend/tests/**, generated_app/frontend/**/*.test.*, generated_app/frontend/**/*.spec.*, generated_app/e2e/**]
+  Security Engineer:
+    allowed_tools: [write_workspace, security_scan]
+    workspace_ownership: [generated_app/security/**]
+  DevOps Engineer:
+    allowed_tools: [write_workspace]
+    workspace_ownership: [generated_app/Dockerfile*, generated_app/**/Dockerfile*, generated_app/docker-compose*.yml, generated_app/docker-compose*.yaml, generated_app/.github/workflows/**, generated_app/deploy/**]

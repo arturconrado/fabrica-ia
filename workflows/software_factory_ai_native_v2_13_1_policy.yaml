@@ -1,0 +1,79 @@
+version: 2.13.1
+extends: software_factory_ai_native_v2_13_policy.yaml
+description: AI-native factory with compact unit context, stable prompt caching and evidence-driven minimal solutions.
+nodes:
+  Acceptance Criteria Architect:
+    plan_model_role: fast
+    finalize_model_role: fast
+    context_policy:
+      unit_context_mode: compact
+      compact_spec_enabled: true
+      plan_input_budget_tokens: 5000
+      unit_input_budget_tokens: 7000
+      finalize_input_budget_tokens: 1500
+      max_unit_references: 8
+  Product Manager:
+    plan_model_role: fast
+    finalize_model_role: fast
+    context_policy:
+      unit_context_mode: compact
+      compact_spec_enabled: true
+      plan_input_budget_tokens: 6000
+      unit_input_budget_tokens: 8000
+      finalize_input_budget_tokens: 1500
+      max_unit_references: 9
+  UX UI Designer:
+    plan_model_role: fast
+    finalize_model_role: fast
+    minimal_solution_policy: true
+    context_policy:
+      unit_context_mode: compact
+      compact_spec_enabled: true
+      plan_input_budget_tokens: 6000
+      unit_input_budget_tokens: 8000
+      finalize_input_budget_tokens: 1500
+      max_unit_references: 8
+  Architect:
+    plan_model_role: reasoning
+    finalize_model_role: fast
+    minimal_solution_policy: true
+    context_policy:
+      unit_context_mode: compact
+      compact_spec_enabled: true
+      plan_input_budget_tokens: 8000
+      unit_input_budget_tokens: 12000
+      finalize_input_budget_tokens: 2000
+      max_unit_references: 10
+  Data Architect:
+    plan_model_role: fast
+    finalize_model_role: fast
+    context_policy:
+      unit_context_mode: compact
+      compact_spec_enabled: true
+      plan_input_budget_tokens: 7000
+      unit_input_budget_tokens: 9000
+      finalize_input_budget_tokens: 1500
+      max_unit_references: 9
+  API Contract Engineer:
+    plan_model_role: fast
+    finalize_model_role: fast
+    context_policy:
+      unit_context_mode: compact
+      compact_spec_enabled: true
+      plan_input_budget_tokens: 8000
+      unit_input_budget_tokens: 11000
+      finalize_input_budget_tokens: 1800
+      max_unit_references: 10
+  Engineer:
+    plan_model_role: reasoning
+    finalize_model_role: fast
+    minimal_solution_policy: true
+    context_policy:
+      unit_context_mode: compact
+      compact_spec_enabled: true
+      plan_input_budget_tokens: 12000
+      unit_input_budget_tokens: 16000
+      finalize_input_budget_tokens: 2500
+      max_unit_references: 12
+  Code Reviewer:
+    minimal_solution_policy: true

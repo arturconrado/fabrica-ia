@@ -17,8 +17,13 @@ test-data/
 apps/web/node_modules/
 apps/web/.next/
 apps/web/out/
+apps/web/playwright-report/
 apps/web/test-results/
+apps/web/tsconfig.tsbuildinfo
 npm-debug.log*
+
+# Generated validation evidence (may contain environment-specific metadata)
+artifacts/
 
 # Runtime factory data
 data/*

@@ -29,6 +29,8 @@ require_llm_upstream_env() {
   if [ -z "${OPENROUTER_API_KEY:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
     die "OPENROUTER_API_KEY or OPENAI_API_KEY is required for full-infra validation"
   fi
+  python3 "$REPO_ROOT/scripts/provider_credential_preflight.py" \
+    || die "Provider credential preflight failed without printing the credential"
 }
 
 load_env_file() {
@@ -97,6 +99,39 @@ with urllib.request.urlopen(f"http://tempo:3200/api/traces/{trace_id}", timeout=
   die "Validation trace $trace_id did not reach Tempo through the OpenTelemetry Collector"
 }
 
+prepare_postgres_test_database() {
+  ASF_VALIDATION_POSTGRES_DB="factory_validation_$(date -u +%Y%m%d%H%M%S)_$$"
+  export ASF_VALIDATION_POSTGRES_DB
+  log "Creating isolated PostgreSQL validation database $ASF_VALIDATION_POSTGRES_DB"
+  (cd "$REPO_ROOT" && docker compose --profile full exec -T postgres \
+    createdb -U factory "$ASF_VALIDATION_POSTGRES_DB")
+  (cd "$REPO_ROOT" && docker compose --profile full run --rm --no-deps \
+    -e DATABASE_URL="postgresql+psycopg://factory:factory@postgres:5432/$ASF_VALIDATION_POSTGRES_DB" \
+    -e ASF_DATABASE_URL="postgresql+psycopg://factory:factory@postgres:5432/$ASF_VALIDATION_POSTGRES_DB" \
+    migrate alembic upgrade head)
+  (cd "$REPO_ROOT" && docker compose --profile full exec -T \
+    -e PGPASSWORD=factory postgres psql -v ON_ERROR_STOP=1 -U factory \
+    -d "$ASF_VALIDATION_POSTGRES_DB" --set=app_password="${ASF_POSTGRES_APP_PASSWORD:-factory_app}" <<'SQL'
+GRANT CONNECT ON DATABASE :DBNAME TO factory_app;
+GRANT USAGE ON SCHEMA public TO factory_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO factory_app;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO factory_app;
+GRANT EXECUTE ON FUNCTION public.asf_aggregate_technical_metrics() TO factory_app;
+GRANT EXECUTE ON FUNCTION public.asf_active_tenant_ids() TO factory_app;
+SQL
+  )
+}
+
+drop_postgres_test_database() {
+  if [ -z "${ASF_VALIDATION_POSTGRES_DB:-}" ]; then
+    return 0
+  fi
+  log "Dropping isolated PostgreSQL validation database $ASF_VALIDATION_POSTGRES_DB"
+  (cd "$REPO_ROOT" && docker compose --profile full exec -T postgres \
+    dropdb -U factory --force --if-exists "$ASF_VALIDATION_POSTGRES_DB")
+  ASF_VALIDATION_POSTGRES_DB=""
+}
+
 auth_header() {
   printf 'Authorization: Bearer %s' "$ASF_TEST_BEARER_TOKEN"
 }
@@ -105,14 +140,9 @@ api_get() {
   curl -fsS -H "$(auth_header)" -H "X-Tenant-ID: $ASF_TEST_TENANT_ID" "$ASF_TEST_API_BASE_URL$1"
 }
 
-api_post_json() {
-  local path="$1"
-  local payload="$2"
-  curl -fsS -X POST "$ASF_TEST_API_BASE_URL$path" \
-    -H "$(auth_header)" \
-    -H "X-Tenant-ID: $ASF_TEST_TENANT_ID" \
-    -H 'Content-Type: application/json' \
-    -d "$payload"
+release_api_get() {
+  curl -fsS -H "Authorization: Bearer $ASF_RELEASE_BEARER_TOKEN" \
+    -H "X-Tenant-ID: $ASF_RELEASE_TENANT_ID" "$ASF_RELEASE_API_BASE_URL$1"
 }
 
 api_status() {
@@ -177,7 +207,7 @@ wait_for_run_evidence() {
       && [ "$manifest_valid" -eq 1 ] \
       && [ "$status" = "waiting_for_human" ] \
       && [ "$package_status" = "200" ] \
-      && python3 -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) >= 85 else 1)' "$hrs"; then
+      && python3 -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) >= 90 else 1)' "$hrs"; then
       api_get "/runs/$run_id/validation-manifest" | python3 -c 'import json,sys; row=json.load(sys.stdin); reports=row["test_reports"]; steps=row["steps"]; failed=any(item["status"]=="failed" for item in reports); assert not failed or max(item["iteration"] for item in steps if item["node_id"]=="Engineer") >= 2; assert row["generation_fingerprint"]; assert row["generated_files"]; assert all(item["model_call_id"] and item["step_execution_id"] for item in row["generated_files"]); assert all(item["model_call_id"] and item["step_execution_id"] for item in row["artifacts"])'
       api_get "/runs/$run_id/delivery-package" | python3 -c 'import json,sys; row=json.load(sys.stdin); assert row.get("path", "").startswith("s3://"); assert row.get("manifest_json", {}).get("storage_prefix", "").startswith("tenants/")'
       api_get "/runs/$run_id/delivery-package/download" | python3 -c 'import io,sys,zipfile; archive=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())); assert "manifest.json" in archive.namelist()'
@@ -197,15 +227,21 @@ main() {
   require_cmd docker
   require_cmd kubectl
   require_cmd kind
+  require_cmd npm
   require_llm_upstream_env
   require_env ASF_LITELLM_API_KEY
   require_env ASF_ENCRYPTION_KEY
+  require_env ASF_LOCAL_RELEASE_CLIENT_SECRET
+  require_env ASF_LOCAL_EXECUTION_CLIENT_SECRET
   export ASF_RUNTIME_PROFILE="production"
   export ASF_AGENT_PROVIDER="litellm"
   export ASF_WORKFLOW_BACKEND="temporal"
   export ASF_LITELLM_BASE_URL="${ASF_LITELLM_BASE_URL:-http://litellm:4000}"
   export ASF_DEFAULT_TENANT_ID="${ASF_FULL_TENANT_ID:-local-dev}"
   export ASF_DEFAULT_TENANT_NAME="${ASF_FULL_TENANT_NAME:-Local Development}"
+  export ASF_RELEASE_TENANT_ID="${ASF_RELEASE_TENANT_ID:-release-homologation}"
+  [ "$ASF_RELEASE_TENANT_ID" != "$ASF_DEFAULT_TENANT_ID" ] \
+    || die "ASF_RELEASE_TENANT_ID must be distinct from the default/customer tenant"
 
   local service_host="localhost"
   if [ "${ASF_DOCKERIZED_CONTROL:-}" = "1" ]; then
@@ -268,9 +304,11 @@ PY
   fi
 
   export ASF_TEST_API_BASE_URL="${ASF_TEST_API_BASE_URL:-$api_origin}"
-  export ASF_TEST_TENANT_ID="${ASF_TEST_TENANT_ID:-$ASF_DEFAULT_TENANT_ID}"
+  export ASF_TEST_TENANT_ID="${ASF_TEST_TENANT_ID:-$ASF_RELEASE_TENANT_ID}"
   local keycloak_user="${ASF_LOCAL_KEYCLOAK_USER:-operator@local.dev}"
   local keycloak_password="${ASF_LOCAL_KEYCLOAK_PASSWORD:-ChangeMe123!}"
+  local vp_keycloak_user="${ASF_LOCAL_VP_KEYCLOAK_USER:-vp@local.dev}"
+  local vp_keycloak_password="${ASF_LOCAL_VP_KEYCLOAK_PASSWORD:-ChangeMeVp123!}"
 
   wait_for_http "API" "$ASF_TEST_API_BASE_URL/health"
   wait_for_http "Web" "$web_origin"
@@ -283,31 +321,49 @@ PY
   wait_for_http "Grafana" "$grafana_origin/api/health"
   validate_trace_pipeline
 
-  log "Getting an OIDC service token for local API validation"
-  token_json="$(
+  log "Getting an OIDC service-account token scoped to the isolated release tenant"
+  release_token_json="$(
     curl -fsS -X POST "$keycloak_origin/realms/software-factory/protocol/openid-connect/token" \
       -H 'Host: localhost:8081' \
       -H 'Content-Type: application/x-www-form-urlencoded' \
-      --data-urlencode 'client_id=software-factory-validation' \
-      --data-urlencode "client_secret=${ASF_LOCAL_VALIDATION_CLIENT_SECRET:-local-validation-only-change-me}" \
+      --data-urlencode 'client_id=software-factory-release' \
+      --data-urlencode "client_secret=$ASF_LOCAL_RELEASE_CLIENT_SECRET" \
       --data-urlencode 'grant_type=client_credentials'
   )"
-  export ASF_TEST_BEARER_TOKEN="$(printf '%s' "$token_json" | http_json_field access_token)"
-  mkdir -p "$REPO_ROOT/data"
-  {
-    printf 'export ASF_TEST_API_BASE_URL=%q\n' "$ASF_TEST_API_BASE_URL"
-    printf 'export ASF_TEST_TENANT_ID=%q\n' "$ASF_TEST_TENANT_ID"
-    printf 'export ASF_TEST_BEARER_TOKEN=%q\n' "$ASF_TEST_BEARER_TOKEN"
-  } > "$REPO_ROOT/data/local-full-infra-test.env"
+  export ASF_RELEASE_API_BASE_URL="$ASF_TEST_API_BASE_URL"
+  export ASF_RELEASE_BEARER_TOKEN="$(printf '%s' "$release_token_json" | http_json_field access_token)"
 
-  log "Checking authenticated principal"
-  api_get "/auth/me" >/dev/null
+  execution_token_json="$(
+    curl -fsS -X POST "$keycloak_origin/realms/software-factory/protocol/openid-connect/token" \
+      -H 'Host: localhost:8081' \
+      -H 'Content-Type: application/x-www-form-urlencoded' \
+      --data-urlencode 'client_id=software-factory-release-execution' \
+      --data-urlencode "client_secret=$ASF_LOCAL_EXECUTION_CLIENT_SECRET" \
+      --data-urlencode 'grant_type=client_credentials'
+  )"
+  export ASF_TEST_BEARER_TOKEN="$(printf '%s' "$execution_token_json" | http_json_field access_token)"
+
+  log "Checking the release service account and tenant scope"
+  release_api_get "/auth/session" | python3 -c '
+import json, os, sys
+row = json.load(sys.stdin); me = row["me"]
+assert me["tenant_id"] == os.environ["ASF_RELEASE_TENANT_ID"]
+assert me["role"] == "release_validator"
+assert me["auth_mode"] == "oidc"
+assert me["token_client_id"] == "software-factory-release"
+tenant = next(item for item in row["tenants"] if item["id"] == me["tenant_id"])
+config = tenant.get("runtime_configuration_json") or {}
+assert config.get("tenant_purpose") == "release_homologation"
+assert config.get("customer_data_allowed") is False
+' 
 
   if [ -f "$control_kubeconfig_path" ]; then
     kubectl --kubeconfig "$control_kubeconfig_path" --context "$context" -n software-factory-sandbox get networkpolicy sandbox-deny-all >/dev/null
     kubectl --kubeconfig "$control_kubeconfig_path" --context "$context" -n software-factory-sandbox get pvc "${ASF_SANDBOX_WORKSPACE_PVC:-asf-sandbox-workspaces}" >/dev/null
   fi
 
+  prepare_postgres_test_database
+  trap drop_postgres_test_database EXIT
   log "Running backend production-stack tests inside the API container"
   (cd "$REPO_ROOT" && docker compose --profile full exec -T \
     -e DATABASE_URL="sqlite:///:memory:" \
@@ -315,8 +371,8 @@ PY
     -e ASF_TEST_API_BASE_URL="http://api:8000" \
     -e ASF_TEST_BEARER_TOKEN="$ASF_TEST_BEARER_TOKEN" \
     -e ASF_TEST_TENANT_ID="$ASF_TEST_TENANT_ID" \
-    -e ASF_TEST_POSTGRES_URL="postgresql+psycopg://factory_app:${ASF_POSTGRES_APP_PASSWORD:-factory_app}@postgres:5432/factory" \
-    -e ASF_TEST_POSTGRES_ADMIN_URL="postgresql+psycopg://factory:factory@postgres:5432/factory" \
+    -e ASF_TEST_POSTGRES_URL="postgresql+psycopg://factory_app:${ASF_POSTGRES_APP_PASSWORD:-factory_app}@postgres:5432/$ASF_VALIDATION_POSTGRES_DB" \
+    -e ASF_TEST_POSTGRES_ADMIN_URL="postgresql+psycopg://factory:factory@postgres:5432/$ASF_VALIDATION_POSTGRES_DB" \
     api python -m pytest)
 
   if [ "${ASF_VALIDATE_ENTERPRISE_RUN:-1}" = "1" ]; then
@@ -327,8 +383,6 @@ PY
     log "ContractFlow run created: $contract_run_id"
     check_sse_once "$contract_run_id"
     wait_for_run_evidence "$contract_run_id"
-    approved_json="$(api_post_json "/runs/$contract_run_id/approve" '{"comment":"Validação humana: escopo ContractFlow, evidências técnicas, rastreabilidade e package revisados e aceitos."}')"
-    printf '%s' "$approved_json" | python3 -c 'import json,sys; row=json.load(sys.stdin); assert row.get("status") == "approved_for_homologation"; assert float(row.get("homologation_readiness_score") or 0) == 100'
     contract_fingerprint="$(api_get "/runs/$contract_run_id/validation-manifest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["generation_fingerprint"])')"
 
     log "Starting ServiceDesk through the real contracted AI-native journey"
@@ -338,14 +392,20 @@ PY
     log "ServiceDesk run created: $servicedesk_run_id"
     check_sse_once "$servicedesk_run_id"
     wait_for_run_evidence "$servicedesk_run_id"
-    approved_json="$(api_post_json "/runs/$servicedesk_run_id/approve" '{"comment":"Validação humana: escopo ServiceDesk, evidências técnicas, rastreabilidade e package revisados e aceitos."}')"
-    printf '%s' "$approved_json" | python3 -c 'import json,sys; row=json.load(sys.stdin); assert row.get("status") == "approved_for_homologation"; assert float(row.get("homologation_readiness_score") or 0) == 100'
     servicedesk_fingerprint="$(api_get "/runs/$servicedesk_run_id/validation-manifest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["generation_fingerprint"])')"
 
     python3 -c 'import sys; assert sys.argv[1] != sys.argv[2], "The two missions produced equivalent source fingerprints"; assert sys.argv[3] != sys.argv[4], "The two missions produced equivalent proposals"' "$contract_fingerprint" "$servicedesk_fingerprint" "$contract_proposal_hash" "$servicedesk_proposal_hash"
-    export ASF_TEST_COMPLETED_RUN_ID="$servicedesk_run_id"
     export ASF_TEST_CONTRACTFLOW_RUN_ID="$contract_run_id"
     export ASF_TEST_SERVICEDESK_RUN_ID="$servicedesk_run_id"
+    if [ -n "${ASF_VALIDATION_RUN_ID_OUTPUT:-}" ]; then
+      mkdir -p "$(dirname "$ASF_VALIDATION_RUN_ID_OUTPUT")"
+      {
+        printf 'ASF_TEST_CONTRACTFLOW_RUN_ID=%s\n' "$contract_run_id"
+        printf 'ASF_TEST_SERVICEDESK_RUN_ID=%s\n' "$servicedesk_run_id"
+      } > "$ASF_VALIDATION_RUN_ID_OUTPUT"
+      chmod 0600 "$ASF_VALIDATION_RUN_ID_OUTPUT"
+    fi
+    log "Both technical missions are waiting for independent human approval"
     log "Validating the two mission manifests without skips"
     (cd "$REPO_ROOT" && docker compose --profile full exec -T \
       -e DATABASE_URL="sqlite:///:memory:" \
@@ -358,6 +418,12 @@ PY
       api python -m pytest -q tests/test_production_stack_contract.py -k two_ai_native_missions)
   fi
 
+  log "Auditing frontend dependency chain"
+  (cd "$REPO_ROOT/apps/web" && npm run audit:security)
+
+  log "Validating fail-closed portfolio load reporting"
+  (cd "$REPO_ROOT" && python3 -m unittest discover -s scripts/tests -p 'test_*.py')
+
   log "Building frontend through Docker Compose"
   (cd "$REPO_ROOT" && docker compose --profile full build web)
 
@@ -369,15 +435,28 @@ PY
       -e ASF_TEST_COMPLETED_RUN_ID="${ASF_TEST_COMPLETED_RUN_ID:-}" \
       -e ASF_TEST_OIDC_USER="$keycloak_user" \
       -e ASF_TEST_OIDC_PASSWORD="$keycloak_password" \
+      -e ASF_TEST_VP_OIDC_USER="$vp_keycloak_user" \
+      -e ASF_TEST_VP_OIDC_PASSWORD="$vp_keycloak_password" \
+      -e ASF_TEST_SERVICE_ENGAGEMENT_ID="${ASF_TEST_SERVICE_ENGAGEMENT_ID:-}" \
       web-e2e)
     (cd "$REPO_ROOT" && docker compose --profile full --profile test stop web-test >/dev/null 2>&1 || true)
   fi
 
   log "Ensuring the Temporal worker remains active after test-profile orchestration"
   (cd "$REPO_ROOT" && docker compose --profile full up -d temporal-worker)
+  (cd "$REPO_ROOT" && docker compose --profile full exec -T temporal \
+    temporal operator namespace describe --address temporal:7233 --namespace default >/dev/null) \
+    || die "Temporal default namespace is not ready after validation"
+  sleep 5
   (cd "$REPO_ROOT" && docker compose --profile full ps --status running --services | grep -qx 'temporal-worker') \
     || die "Temporal worker is not running after validation"
+  if (cd "$REPO_ROOT" && docker compose --profile full logs --since=15s --no-color temporal-worker 2>&1 | \
+    grep -Eq 'Traceback|Worker validation failed|relation "namespaces" does not exist'); then
+    die "Temporal worker started with a terminal validation error"
+  fi
 
+  drop_postgres_test_database
+  trap - EXIT
   log "Full-infra validation completed"
 }
 

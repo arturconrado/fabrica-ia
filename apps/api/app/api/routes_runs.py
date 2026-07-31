@@ -1,5 +1,6 @@
 import io
 import hashlib
+import json
 import uuid
 import zipfile
 from typing import Optional
@@ -30,6 +31,7 @@ from app.models import (
     HomologationPackage,
     HomologationReport,
     ModelCall,
+    PluginInvocation,
     Project,
     QualityGate,
     QualityScore,
@@ -42,13 +44,15 @@ from app.models import (
     utcnow,
 )
 from app.schemas import EnterpriseRunCreate, HumanDecision, RunCreate
-from app.schemas.operational import RunWorkspaceResponse, TokenAnalysisResponse
+from app.schemas.operational import RunPluginAnalysisResponse, RunWorkspaceResponse, TokenAnalysisResponse
 from app.providers.object_storage import object_storage
 from app.services.run_service import provider
 from app.services.serialization import model_to_dict, models_to_dict
 from app.service_delivery.capacity import acquire_workflow_slot, release_workflow_slot
 from app.workflow.temporal_outbox import enqueue_cancel, enqueue_signal, enqueue_start
 from app.api.routes_workflows import serialize_workflow_topology
+from app.plugins import FactoryPluginRuntime
+from app.plugins.ponytail import PonytailPolicy
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 OPERATIONAL_ROLES = ("owner", "super_admin", "tenant_admin", "engagement_manager", "consultant", "admin", "operator")
@@ -112,28 +116,6 @@ def _require_temporal_workflow(run: WorkflowRun) -> None:
 
 def _uses_temporal() -> bool:
     return get_settings().workflow_backend.lower() == "temporal"
-
-
-def _run_control(db: Session, run: WorkflowRun) -> AgentRunState:
-    control = db.query(AgentRunState).filter_by(run_id=run.id, tenant_id=run.tenant_id, agent_name="RUN_CONTROL").first()
-    if control:
-        return control
-    control = AgentRunState(
-        id=str(uuid.uuid4()),
-        tenant_id=run.tenant_id,
-        run_id=run.id,
-        agent_name="RUN_CONTROL",
-        role="Orchestration Control",
-        status="running",
-        current_sop_step="continuous",
-        objective="Controlar pause, resume e avanço unitário do pipeline cooperativo.",
-        inputs_json=[],
-        outputs_json=[],
-        tools_json=["pause", "resume", "step", "cancel"],
-    )
-    db.add(control)
-    db.flush()
-    return control
 
 
 def _create_scheduled_run(
@@ -316,6 +298,9 @@ def get_run_workspace(
     artifact_fragments = db.query(ArtifactFragment).filter_by(
         run_id=run_id, tenant_id=principal.tenant_id
     ).order_by(ArtifactFragment.created_at.asc(), ArtifactFragment.order_index.asc()).all()
+    plugin_invocations = db.query(PluginInvocation).filter_by(
+        run_id=run_id, tenant_id=principal.tenant_id
+    ).order_by(PluginInvocation.created_at.asc()).all()
     return {
         "run": {**model_to_dict(run), "project": model_to_dict(project) if project else None},
         "topology": serialize_workflow_topology(workflow) if workflow else None,
@@ -348,6 +333,7 @@ def get_run_workspace(
         "step_executions": models_to_dict(steps),
         "execution_units": models_to_dict(execution_units),
         "artifact_fragments": models_to_dict(artifact_fragments),
+        "plugin_invocations": models_to_dict(plugin_invocations),
         "validation": _validation_manifest(db, run),
     }
 
@@ -358,7 +344,16 @@ def _validation_manifest(db: Session, run: WorkflowRun) -> dict:
     artifacts = db.query(Artifact).filter_by(tenant_id=run.tenant_id, run_id=run.id).order_by(Artifact.created_at.asc()).all()
     changes = db.query(FileChange).filter_by(tenant_id=run.tenant_id, run_id=run.id).order_by(FileChange.created_at.asc()).all()
     reports = db.query(TestReport).filter_by(tenant_id=run.tenant_id, run_id=run.id).order_by(TestReport.created_at.asc()).all()
+    traces = (
+        db.query(RequirementTrace)
+        .filter_by(tenant_id=run.tenant_id, run_id=run.id)
+        .order_by(RequirementTrace.created_at.asc())
+        .all()
+    )
     gates = db.query(QualityGate).filter_by(tenant_id=run.tenant_id, run_id=run.id).order_by(QualityGate.created_at.asc()).all()
+    plugin_invocations = db.query(PluginInvocation).filter_by(
+        tenant_id=run.tenant_id, run_id=run.id
+    ).order_by(PluginInvocation.created_at.asc()).all()
     linked_artifacts = all(artifact.model_call_id and artifact.step_execution_id for artifact in artifacts) if artifacts else False
     generated_changes = [change for change in changes if change.file_path.startswith("generated_app/")]
     linked_files = all(change.model_call_id and change.step_execution_id for change in generated_changes) if generated_changes else False
@@ -373,6 +368,66 @@ def _validation_manifest(db: Session, run: WorkflowRun) -> dict:
         f"{change.file_path}:{hashlib.sha256(change.after_content.encode()).hexdigest()}"
         for change in generated_changes
     )
+    required_plugin_commands = {
+        "ponytail": {"activate", "instructions", "review", "audit", "debt", "gain", "help"},
+        "cavekit": {"grill", "spec", "research", "review", "build", "check", "backprop", "deepen", "caveman"},
+    }
+    observed_plugin_commands = {
+        name: {
+            row.command
+            for row in plugin_invocations
+            if row.plugin_name == name and row.status in {"completed", "not_applicable"}
+        }
+        for name in required_plugin_commands
+    }
+    cavekit_invocations = [row for row in plugin_invocations if row.plugin_name == "cavekit"]
+
+    def cavekit_attempt_key(row: PluginInvocation) -> tuple[str, str, int, str, str]:
+        return (
+            row.command,
+            row.node_id,
+            int((row.metadata_json or {}).get("iteration") or 0),
+            row.action.split(":", 1)[0],
+            row.execution_unit_id or "",
+        )
+
+    cavekit_successes = {
+        cavekit_attempt_key(row)
+        for row in cavekit_invocations
+        if row.status in {"completed", "not_applicable"}
+    }
+    unrecovered_cavekit_failures = {
+        cavekit_attempt_key(row)
+        for row in cavekit_invocations
+        if row.status == "failed"
+    }.difference(cavekit_successes)
+
+    def cavekit_evidence_is_valid(row: PluginInvocation) -> bool:
+        metadata = row.metadata_json or {}
+        if row.status == "completed":
+            return bool(
+                metadata.get("evidence_type")
+                and any(
+                    metadata.get(key)
+                    for key in ("step_execution_id", "execution_unit_id", "test_report_ids", "quality_gate_ids")
+                )
+            )
+        if row.status == "not_applicable":
+            return bool(metadata.get("reason"))
+        if row.status == "failed":
+            return bool(metadata.get("evidence_type") and row.error)
+        return False
+
+    cavekit_stage_evidence_complete = bool(cavekit_invocations) and all(
+        cavekit_evidence_is_valid(row) for row in cavekit_invocations
+    ) and not unrecovered_cavekit_failures
+    plugins_required = str((run.context_manifest_json or {}).get("workflow_version") or "") in {"2.13.2", "2.14.0"}
+    plugin_coverage_ok = all(
+        commands.issubset(observed_plugin_commands.get(name, set()))
+        for name, commands in required_plugin_commands.items()
+    ) and all(
+        row.status != "failed" for row in plugin_invocations if row.plugin_name == "ponytail"
+    ) and cavekit_stage_evidence_complete
     return {
         "run_id": run.id,
         "tenant_id": run.tenant_id,
@@ -432,6 +487,23 @@ def _validation_manifest(db: Session, run: WorkflowRun) -> dict:
             }
             for call in calls
         ],
+        "plugin_invocations": [
+            {
+                "id": invocation.id,
+                "plugin_name": invocation.plugin_name,
+                "plugin_version": invocation.plugin_version,
+                "source_revision": invocation.source_revision,
+                "command": invocation.command,
+                "mode": invocation.mode,
+                "node_id": invocation.node_id,
+                "action": invocation.action,
+                "status": invocation.status,
+                "input_hash": invocation.input_hash,
+                "output_hash": invocation.output_hash,
+                "execution_unit_id": invocation.execution_unit_id,
+            }
+            for invocation in plugin_invocations
+        ],
         "artifacts": [
             {
                 "id": artifact.id,
@@ -448,14 +520,35 @@ def _validation_manifest(db: Session, run: WorkflowRun) -> dict:
                 "path": change.file_path,
                 "model_call_id": change.model_call_id,
                 "step_execution_id": change.step_execution_id,
+                "spec_refs": change.spec_refs_json,
                 "sha256": hashlib.sha256(change.after_content.encode()).hexdigest(),
             }
             for change in generated_changes
         ],
         "generation_fingerprint": hashlib.sha256(fingerprint_input.encode()).hexdigest() if fingerprint_input else None,
         "test_reports": [
-            {"id": report.id, "command": report.command, "status": report.status, "sandbox_execution_id": report.sandbox_execution_id}
+            {
+                "id": report.id,
+                "command": report.command,
+                "status": report.status,
+                "sandbox_execution_id": report.sandbox_execution_id,
+                "spec_refs": report.spec_refs_json,
+            }
             for report in reports
+        ],
+        "traceability": [
+            {
+                "id": trace.id,
+                "requirement_id": trace.requirement_id,
+                "criterion_ids": trace.criterion_ids_json,
+                "invariant_ids": trace.invariant_ids_json,
+                "file_path": trace.file_path,
+                "test_name": trace.test_name,
+                "test_report_id": trace.test_report_id,
+                "provenance": trace.provenance,
+                "status": trace.status,
+            }
+            for trace in traces
         ],
         "gates": [{"gate_id": gate.gate_id, "status": gate.status, "score": gate.score} for gate in gates],
         "invariants": {
@@ -470,6 +563,13 @@ def _validation_manifest(db: Session, run: WorkflowRun) -> dict:
             "all_ai_workflow_nodes_completed": AI_NATIVE_REQUIRED_NODES.issubset(completed_ai_nodes),
             "generated_application_initializes": all(commands.get(command) == "passed" for command in initialization_commands),
             "ai_native_workflow_only": run.workflow_id == "software_factory_ai_native_v2" and run.generation_mode == "ai_native_v2",
+            "mandatory_plugin_coverage": plugin_coverage_ok if plugins_required else True,
+            "cavekit_stage_evidence_complete": cavekit_stage_evidence_complete if plugins_required else True,
+            "verified_contract_traceability": (
+                any(gate.gate_id == "traceability" and gate.status == "passed" for gate in gates)
+                and bool(traces)
+                and all(trace.provenance == "verified_contract" for trace in traces)
+            ) if plugins_required else True,
         },
     }
 
@@ -575,6 +675,10 @@ def get_token_analysis(
                     "budget_tokens": context.input_budget_tokens if context else None,
                     "selected_tokens": context.selected_tokens if context else None,
                     "discarded_tokens": context.discarded_tokens if context else None,
+                    "unit_mode": (unit.context_manifest_json or {}).get("mode") if unit else None,
+                    "unit_source_tokens": unit.source_input_tokens if unit else None,
+                    "unit_input_tokens": unit.estimated_input_tokens if unit else None,
+                    "unit_saved_tokens": unit.saved_input_tokens if unit else None,
                     "references": selected_refs,
                     "discarded_references": context.discarded_references_json if context else [],
                     "cited_references": sorted(cited_ids),
@@ -588,6 +692,7 @@ def get_token_analysis(
             continue
         unit = units_by_id.get(call.execution_unit_id or "")
         invocation = invocations_by_id.get(call.ai_invocation_id or "")
+        unit_references = list((unit.context_manifest_json or {}).get("reference_manifest") or []) if unit else []
         nodes.append(
             {
                 "node_id": unit.node_id if unit else call.agent_name,
@@ -625,11 +730,18 @@ def get_token_analysis(
                     else None
                 ),
                 "context": {
-                    "policy_version": None,
+                    "policy_version": unit.optimization_policy_version if unit else None,
                     "budget_tokens": unit.input_budget_tokens if unit else None,
-                    "selected_tokens": None,
+                    "selected_tokens": unit.estimated_input_tokens if unit else None,
                     "discarded_tokens": None,
-                    "references": [],
+                    "unit_mode": (unit.context_manifest_json or {}).get("mode") if unit else None,
+                    "unit_source_tokens": unit.source_input_tokens if unit else None,
+                    "unit_input_tokens": unit.estimated_input_tokens if unit else None,
+                    "unit_saved_tokens": unit.saved_input_tokens if unit else None,
+                    "references": [
+                        {**reference, "estimated_tokens": 0}
+                        for reference in unit_references
+                    ],
                     "discarded_references": [],
                     "cited_references": [],
                     "cited_tokens": None,
@@ -644,6 +756,9 @@ def get_token_analysis(
     retry_calls = [call for call in calls if call.attempt_number > 1 or call.retry_classification not in {"", "initial"}]
     actual_cost = round(sum(call.estimated_cost_usd for call in calls), 8)
     run_budget = float(run.ai_budget_usd or get_settings().model_run_budget_usd)
+    compact_source_tokens = sum(unit.source_input_tokens for unit in execution_units if unit.optimization_policy_version)
+    compact_input_tokens = sum(unit.estimated_input_tokens for unit in execution_units if unit.optimization_policy_version)
+    compact_saved_tokens = sum(unit.saved_input_tokens for unit in execution_units if unit.optimization_policy_version)
     return {
         "run_id": run.id,
         "workflow_id": run.workflow_id,
@@ -677,6 +792,12 @@ def get_token_analysis(
             "cache_eligible_tokens": sum(call.cache_eligible_tokens for call in calls),
             "cache_write_tokens": sum(call.cache_write_tokens for call in calls),
             "cache_savings_usd": round(sum(call.cache_savings_usd for call in calls), 8),
+            "compact_source_tokens": compact_source_tokens,
+            "compact_input_tokens": compact_input_tokens,
+            "compact_saved_tokens": compact_saved_tokens,
+            "compact_savings_ratio": (
+                round(compact_saved_tokens / compact_source_tokens, 4) if compact_source_tokens else None
+            ),
         },
         "budget": {
             "hard_limit_usd": run_budget,
@@ -696,6 +817,89 @@ def get_validation_manifest(
 ):
     run = _get_run_or_404(db, run_id, principal)
     return _validation_manifest(db, run)
+
+
+@router.get("/{run_id}/plugins", response_model=RunPluginAnalysisResponse)
+def get_run_plugins(
+    run_id: str,
+    principal: Principal = Depends(require_roles(*OPERATIONAL_ROLES)),
+    db: Session = Depends(get_db),
+):
+    run = _get_run_or_404(db, run_id, principal)
+    invocations = (
+        db.query(PluginInvocation)
+        .filter_by(tenant_id=run.tenant_id, run_id=run.id)
+        .order_by(PluginInvocation.created_at.asc())
+        .all()
+    )
+    changes = (
+        db.query(FileChange)
+        .filter_by(tenant_id=run.tenant_id, run_id=run.id)
+        .filter(FileChange.file_path.like("generated_app/%"))
+        .order_by(FileChange.created_at.asc())
+        .all()
+    )
+    latest_by_path = {change.file_path: change.after_content for change in changes}
+    dependencies: set[str] = set()
+    for path, content in latest_by_path.items():
+        if path.endswith("package.json"):
+            try:
+                package = json.loads(content)
+                dependencies.update((package.get("dependencies") or {}).keys())
+                dependencies.update((package.get("devDependencies") or {}).keys())
+            except (TypeError, ValueError):
+                pass
+        if path.endswith(("requirements.txt", "requirements.in")):
+            dependencies.update(
+                line.split("==", 1)[0].split(">=", 1)[0].strip()
+                for line in content.splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            )
+    artifacts = (
+        db.query(Artifact)
+        .filter(
+            Artifact.tenant_id == run.tenant_id,
+            Artifact.run_id == run.id,
+            Artifact.name.in_(["PONYTAIL_AUDIT.md", "PONYTAIL_DEBT.md"]),
+        )
+        .order_by(Artifact.created_at.asc())
+        .all()
+    )
+    commands = sorted({f"{row.plugin_name}.{row.command}" for row in invocations})
+    return {
+        "run_id": run.id,
+        "policy_version": str((run.context_manifest_json or {}).get("workflow_version") or ""),
+        "manifests": FactoryPluginRuntime().manifests(),
+        "help": PonytailPolicy.help_payload(),
+        "invocations": models_to_dict(invocations),
+        "coverage": {
+            "commands": commands,
+            "completed": sum(row.status == "completed" for row in invocations),
+            "registered": sum(row.status == "registered" for row in invocations),
+            "not_applicable": sum(row.status == "not_applicable" for row in invocations),
+            "failed": sum(row.status == "failed" for row in invocations),
+        },
+        "measured": {
+            "generated_files": len(latest_by_path),
+            "non_blank_lines": sum(
+                1 for content in latest_by_path.values() for line in content.splitlines() if line.strip()
+            ),
+            "declared_dependencies": len(dependencies),
+            "dependency_names": sorted(dependencies),
+            "model_cost_usd": float(run.ai_cost_usd or 0.0),
+            "provenance": "calculated_from_persisted_run",
+        },
+        "artifacts": [
+            {
+                "id": artifact.id,
+                "name": artifact.name,
+                "evidence_classification": artifact.evidence_classification,
+                "created_at": artifact.created_at.isoformat(),
+            }
+            for artifact in artifacts
+        ],
+        "benchmark_boundary": "No upstream Ponytail benchmark is presented as savings for this run.",
+    }
 
 
 @router.get("/{run_id}/execution-units")
@@ -765,7 +969,7 @@ async def pause_run(run_id: str, principal: Principal = Depends(require_roles("o
     if _uses_temporal():
         _require_temporal_workflow(run)
     run.status = "pending"
-    control = _run_control(db, run)
+    control = provider.control_state(db, run)
     control.status = "paused"
     control.current_sop_step = "operator_paused"
     if _uses_temporal():
@@ -791,7 +995,7 @@ async def resume_run(run_id: str, principal: Principal = Depends(require_roles("
     run.status = "running"
     if run.current_phase == "budget_paused":
         run.current_phase = "budget_resumed"
-    control = _run_control(db, run)
+    control = provider.control_state(db, run)
     control.status = "running"
     control.current_sop_step = "continuous"
     if _uses_temporal():
@@ -810,11 +1014,20 @@ async def resume_run(run_id: str, principal: Principal = Depends(require_roles("
 @router.post("/{run_id}/cancel")
 async def cancel_run(run_id: str, principal: Principal = Depends(require_roles("owner", "admin", "operator")), db: Session = Depends(get_db)):
     run = _get_run_or_404(db, run_id, principal)
+    if run.status == "cancel_requested":
+        if not _uses_temporal():
+            raise HTTPException(status_code=409, detail="Cancellation is already pending")
+        _require_temporal_workflow(run)
+        enqueue_cancel(db, run)
+        audit(db, principal, "run.cancellation_reconciled", "run", run.id)
+        db.commit()
+        db.refresh(run)
+        return model_to_dict(run)
     _ensure_controllable(run)
     previous_status = run.status
     if _uses_temporal():
         _require_temporal_workflow(run)
-    control = _run_control(db, run)
+    control = provider.control_state(db, run)
     if _uses_temporal():
         enqueue_cancel(db, run)
     if previous_status == "waiting_for_human":
@@ -844,7 +1057,7 @@ async def step_run(run_id: str, principal: Principal = Depends(require_roles("ow
     _ensure_controllable(run)
     if _uses_temporal():
         _require_temporal_workflow(run)
-        control = _run_control(db, run)
+        control = provider.control_state(db, run)
         control.status = "step_once"
         control.current_sop_step = "manual_step_requested"
         run.status = "running"

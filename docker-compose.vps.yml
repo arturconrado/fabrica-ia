@@ -37,18 +37,6 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - ./data/redis:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
   temporal-postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -403,10 +391,18 @@ services:
   api:
     build:
       context: ./apps/api
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "${ASF_API_WORKERS:-4}", "--timeout-keep-alive", "${ASF_API_KEEP_ALIVE_SECONDS:-15}", "--timeout-worker-healthcheck", "${ASF_API_WORKER_HEALTHCHECK_TIMEOUT_SECONDS:-60}", "--no-access-log"]
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://factory_app:${ASF_POSTGRES_APP_PASSWORD:?Set ASF_POSTGRES_APP_PASSWORD}@postgres:5432/factory
       ASF_DATABASE_URL: postgresql+psycopg://factory_app:${ASF_POSTGRES_APP_PASSWORD:?Set ASF_POSTGRES_APP_PASSWORD}@postgres:5432/factory
+      ASF_API_WORKERS: ${ASF_API_WORKERS:-4}
+      ASF_API_THREADPOOL_TOKENS: ${ASF_API_THREADPOOL_TOKENS:-40}
+      ASF_API_WORKER_HEALTHCHECK_TIMEOUT_SECONDS: ${ASF_API_WORKER_HEALTHCHECK_TIMEOUT_SECONDS:-60}
+      ASF_DB_POOL_SIZE: ${ASF_DB_POOL_SIZE:-5}
+      ASF_DB_MAX_OVERFLOW: ${ASF_DB_MAX_OVERFLOW:-5}
+      ASF_DB_POOL_TIMEOUT_SECONDS: ${ASF_DB_POOL_TIMEOUT_SECONDS:-15}
+      ASF_HOMOLOGATION_GLOBAL_BUDGET_USD: ${ASF_HOMOLOGATION_GLOBAL_BUDGET_USD:-0}
       ASF_ENVIRONMENT: production
       ASF_RUNTIME_PROFILE: production
       ASF_DATA_DIR: /data
@@ -491,8 +487,6 @@ services:
         condition: service_completed_successfully
       db-role-init:
         condition: service_completed_successfully
-      redis:
-        condition: service_healthy
       temporal:
         condition: service_started
       minio-init:
@@ -552,6 +546,7 @@ services:
       ASF_CODE_MODEL_MAX_OUTPUT_TOKENS: ${ASF_CODE_MODEL_MAX_OUTPUT_TOKENS:-32000}
       ASF_AGENT_RETRY_BACKOFF_SECONDS: ${ASF_AGENT_RETRY_BACKOFF_SECONDS:-6}
       ASF_MODEL_MONTHLY_BUDGET_USD: ${ASF_MODEL_MONTHLY_BUDGET_USD:-250}
+      ASF_HOMOLOGATION_GLOBAL_BUDGET_USD: ${ASF_HOMOLOGATION_GLOBAL_BUDGET_USD:-0}
       ASF_MODEL_RUN_BUDGET_USD: ${ASF_MODEL_RUN_BUDGET_USD:-15}
       ASF_MODEL_COMMERCIAL_OPERATION_BUDGET_USD: ${ASF_MODEL_COMMERCIAL_OPERATION_BUDGET_USD:-2}
       ASF_MODEL_ENGAGEMENT_PLAN_BUDGET_USD: ${ASF_MODEL_ENGAGEMENT_PLAN_BUDGET_USD:-2}

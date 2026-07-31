@@ -1,12 +1,14 @@
+import hashlib
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import Principal, require_roles
-from app.db.session import SessionLocal, get_db, set_tenant_context
+from app.api.routes_service_delivery_os import _tenant_projection
+from app.db.session import get_db, set_tenant_context
 from app.models import (
     Approval,
     ApprovalRequest,
@@ -15,6 +17,7 @@ from app.models import (
     GamificationEvent,
     KnowledgeBase,
     KnowledgeDocument,
+    LedgerHead,
     LedgerRecord,
     Membership,
     ModelCall,
@@ -23,11 +26,13 @@ from app.models import (
     Engagement,
     OfferingVersion,
     ServiceDeliverable,
+    ServiceExecution,
     ServiceWorkItem,
 )
 from app.schemas.operational import MetricValue, OverviewResponse, PortfolioResponse, TenantSummary
 from app.schemas.service_delivery_os import CapacityResponse, ServicePortfolioClient, ServicePortfolioResponse
 from app.core.config import get_settings
+from app.operational_guidance import build_operational_guidance
 from app.services.serialization import models_to_dict
 
 
@@ -121,6 +126,27 @@ def _summary(db: Session, tenant: Tenant, role: str) -> TenantSummary:
             "href": f"/runs/{run.id}",
         }
 
+    guidance = build_operational_guidance(
+        action=next_action,
+        state={
+            "tenant_id": tenant.id,
+            "role": role,
+            "active_runs": len(active_runs),
+            "pending_approvals": len(service_approvals) + len(run_approvals),
+            "blocked_items": len(blocked),
+            "last_event_sequence": last_event.tenant_sequence if last_event else 0,
+        },
+        why_now=(
+            "Esta é a primeira decisão humana pendente da fila." if next_action and next_action["kind"] == "approval"
+            else "Este bloqueio impede o avanço seguro do trabalho." if next_action and next_action["kind"] == "blocker"
+            else "A execução está ativa e concentra a próxima verificação operacional."
+        ),
+        checks=["Confirme o cliente e o recurso.", "Confira as evidências antes de decidir.", "Registre contexto na ação."],
+        risks=["Uma decisão sem evidência pode quebrar a rastreabilidade."] if next_action else [],
+        draft=f"Revise {next_action['title']} e registre a decisão com evidências." if next_action else "",
+        evidence_refs=[next_action["resource_id"], *([last_event.id] if last_event else [])] if next_action else [],
+        generated_at=(last_event.created_at if last_event else tenant.created_at),
+    )
     return TenantSummary(
         tenant_id=tenant.id,
         tenant_name=tenant.name,
@@ -148,6 +174,7 @@ def _summary(db: Session, tenant: Tenant, role: str) -> TenantSummary:
         maturity_level=_level_name(xp),
         maturity_xp=xp,
         next_action=next_action,
+        guidance=guidance,
         last_event_at=_iso(last_event.created_at) if last_event else None,
     )
 
@@ -165,15 +192,14 @@ def portfolio(
     )
     memberships = [membership for membership in memberships if membership.role in OPERATOR_ROLES]
     clients = []
-    for membership in memberships:
-        tenant_db = SessionLocal()
-        try:
-            set_tenant_context(tenant_db, membership.tenant_id, principal.user_id)
-            tenant = tenant_db.get(Tenant, membership.tenant_id)
+    try:
+        for membership in memberships:
+            set_tenant_context(db, membership.tenant_id, principal.user_id)
+            tenant = db.get(Tenant, membership.tenant_id)
             if tenant and tenant.status != "deleted":
-                clients.append(_summary(tenant_db, tenant, membership.role))
-        finally:
-            tenant_db.close()
+                clients.append(_summary(db, tenant, membership.role))
+    finally:
+        set_tenant_context(db, principal.tenant_id, principal.user_id)
     clients.sort(key=lambda item: (item.next_action is None, item.tenant_name.lower()))
     return PortfolioResponse(generated_at=datetime.utcnow().isoformat(), clients=clients)
 
@@ -280,21 +306,38 @@ def _operator_tenant_sessions(principal: Principal, db: Session):
     return [membership for membership in memberships if membership.role in OPERATOR_ROLES]
 
 
+def _operator_projection_state(
+    principal: Principal,
+    db: Session,
+    memberships,
+) -> int:
+    """Fingerprint every tenant visible in a cross-tenant owner projection."""
+    sequences: list[tuple[str, int]] = []
+    try:
+        for membership in memberships:
+            set_tenant_context(db, membership.tenant_id, principal.user_id)
+            head = db.get(LedgerHead, membership.tenant_id)
+            sequences.append((membership.tenant_id, int(head.last_sequence if head else 0)))
+    finally:
+        set_tenant_context(db, principal.tenant_id, principal.user_id)
+    digest = hashlib.sha256(repr(sorted(sequences)).encode("utf-8")).hexdigest()
+    return int(digest[:15], 16)
+
+
 @router.get("/service-portfolio", response_model=ServicePortfolioResponse)
 def service_portfolio(
     principal: Principal = Depends(require_roles(*OPERATOR_ROLES)),
     db: Session = Depends(get_db),
 ):
     clients = []
-    for membership in _operator_tenant_sessions(principal, db):
-        tenant_db = SessionLocal()
-        try:
-            set_tenant_context(tenant_db, membership.tenant_id, principal.user_id)
-            tenant = tenant_db.get(Tenant, membership.tenant_id)
+    try:
+        for membership in _operator_tenant_sessions(principal, db):
+            set_tenant_context(db, membership.tenant_id, principal.user_id)
+            tenant = db.get(Tenant, membership.tenant_id)
             if tenant and tenant.status != "deleted":
-                clients.append(_service_summary(tenant_db, tenant, membership.role))
-        finally:
-            tenant_db.close()
+                clients.append(_service_summary(db, tenant, membership.role))
+    finally:
+        set_tenant_context(db, principal.tenant_id, principal.user_id)
     clients.sort(key=lambda item: (-item.deliverables_at_risk, item.next_commitment is None, item.tenant_name.casefold()))
     return ServicePortfolioResponse(generated_at=datetime.utcnow(), clients=clients)
 
@@ -303,84 +346,196 @@ def service_portfolio(
 def operator_work_queue(
     principal: Principal = Depends(require_roles(*OPERATOR_ROLES)),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
-    priority_order = {"critical": 0, "high": 1, "normal": 2, "low": 3}
-    rows = []
-    for membership in _operator_tenant_sessions(principal, db):
-        tenant_db = SessionLocal()
+    memberships = _operator_tenant_sessions(principal, db)
+    state_version = _operator_projection_state(principal, db, memberships)
+
+    def build():
+        priority_order = {"critical": 0, "high": 1, "normal": 2, "low": 3}
+        profile_keywords = {
+            "business_analyst": ("diagnóstico", "processo", "valor", "roadmap", "business"),
+            "software_engineer": ("técnic", "software", "piloto", "engenharia", "código"),
+            "qa_quality": ("qualidade", "teste", "gate", "evidência"),
+            "governance_risk": ("governança", "risco", "política", "controle"),
+        }
+        rows = []
         try:
-            set_tenant_context(tenant_db, membership.tenant_id, principal.user_id)
-            tenant = tenant_db.get(Tenant, membership.tenant_id)
-            items = tenant_db.query(ServiceWorkItem).filter(
-                ServiceWorkItem.tenant_id == membership.tenant_id,
-                ServiceWorkItem.status.in_(["blocked", "in_progress", "queued"]),
-            ).all()
-            for item in items:
-                engagement = tenant_db.query(Engagement).filter_by(id=item.engagement_id, tenant_id=membership.tenant_id).first()
-                rows.append({
-                    "id": item.id,
-                    "tenant_id": membership.tenant_id,
-                    "tenant_name": tenant.name if tenant else membership.tenant_id,
-                    "engagement_id": item.engagement_id,
-                    "engagement_name": engagement.name if engagement else "",
-                    "title": item.title,
-                    "status": item.status,
-                    "priority": item.priority,
-                    "due_at": _iso(item.due_at),
-                    "blocked_reason": item.blocked_reason,
-                    "record_version": item.record_version,
-                })
+            for membership in memberships:
+                set_tenant_context(db, membership.tenant_id, principal.user_id)
+                tenant = db.get(Tenant, membership.tenant_id)
+                items = db.query(ServiceWorkItem).filter(
+                    ServiceWorkItem.tenant_id == membership.tenant_id,
+                    ServiceWorkItem.status.in_(["blocked", "in_progress", "queued"]),
+                ).all()
+                executions = {
+                    execution.work_item_id: execution
+                    for execution in db.query(ServiceExecution).filter(
+                        ServiceExecution.tenant_id == membership.tenant_id,
+                        ServiceExecution.work_item_id.in_([item.id for item in items]),
+                    ).all()
+                } if items else {}
+                engagement_ids = {item.engagement_id for item in items}
+                engagements = {
+                    engagement.id: engagement
+                    for engagement in db.query(Engagement).filter(
+                        Engagement.tenant_id == membership.tenant_id,
+                        Engagement.id.in_(engagement_ids),
+                    ).all()
+                } if engagement_ids else {}
+                offering_version_ids = {engagement.offering_version_id for engagement in engagements.values()}
+                versions = {
+                    version.id: version
+                    for version in db.query(OfferingVersion).filter(
+                        OfferingVersion.id.in_(offering_version_ids)
+                    ).all()
+                } if offering_version_ids else {}
+                linked_deliverables = db.query(ServiceDeliverable).filter(
+                    ServiceDeliverable.tenant_id == membership.tenant_id,
+                    ServiceDeliverable.engagement_id.in_(engagement_ids),
+                ).all() if engagement_ids else []
+                deliverables_by_engagement = {}
+                for deliverable in linked_deliverables:
+                    deliverables_by_engagement.setdefault(deliverable.engagement_id, {})[
+                        deliverable.template_key
+                    ] = deliverable
+                for item in items:
+                    engagement = engagements.get(item.engagement_id)
+                    execution = executions.get(item.id)
+                    group = None
+                    if engagement and item.operation_key:
+                        version = versions.get(engagement.offering_version_id)
+                        group = next((
+                            value
+                            for value in ((version.definition_json or {}).get("technical_run_groups", []) if version else [])
+                            if str(value.get("key") or "") == item.operation_key
+                        ), None)
+                    related = [
+                        deliverables_by_engagement.get(item.engagement_id, {})[key]
+                        for key in ((group or {}).get("deliverable_template_keys") or [])
+                        if key in deliverables_by_engagement.get(item.engagement_id, {})
+                    ]
+                    evidence = execution.evidence_json if execution else {}
+                    rows.append({
+                        "id": item.id,
+                        "tenant_id": membership.tenant_id,
+                        "tenant_name": tenant.name if tenant else membership.tenant_id,
+                        "engagement_id": item.engagement_id,
+                        "engagement_name": engagement.name if engagement else "",
+                        "title": item.title,
+                        "execution_mode": item.execution_mode,
+                        "operation_key": item.operation_key,
+                        "run_id": str((evidence or {}).get("workflow_run_id") or "") or None,
+                        "related_deliverables": [
+                            {"id": deliverable.id, "title": deliverable.title, "status": deliverable.status}
+                            for deliverable in related
+                        ],
+                        "operator_profile": membership.operator_profile,
+                        "execution_id": execution.id if execution else None,
+                        "execution_status": execution.status if execution else None,
+                        "status": item.status,
+                        "priority": item.priority,
+                        "due_at": _iso(item.due_at),
+                        "blocked_reason": item.blocked_reason,
+                        "record_version": item.record_version,
+                    })
         finally:
-            tenant_db.close()
-    rows.sort(key=lambda item: (
-        item["status"] != "blocked",
-        priority_order.get(item["priority"], 9),
-        item["due_at"] or "9999-12-31",
-    ))
-    return {"generated_at": datetime.utcnow().isoformat(), "items": rows}
+            set_tenant_context(db, principal.tenant_id, principal.user_id)
+        def affinity(item):
+            profile = str(item.get("operator_profile") or "generalist")
+            if profile == "software_engineer" and item["execution_mode"] == "technical_run":
+                return 0
+            keywords = profile_keywords.get(profile, ())
+            return 0 if any(keyword in item["title"].casefold() for keyword in keywords) else 1
+        rows.sort(key=lambda item: (
+            item["status"] != "blocked",
+            priority_order.get(item["priority"], 9),
+            item["due_at"] or "9999-12-31",
+            affinity(item),
+            item["title"].casefold(),
+        ))
+        return {"generated_at": datetime.utcnow().isoformat(), "items": rows}
+
+    if request is None:
+        response = build()
+        db.rollback()
+        return response
+    return _tenant_projection(
+        db,
+        tenant_id=principal.tenant_id,
+        projection=f"operator-work-queue:{principal.user_id}",
+        build=build,
+        accepts_gzip=bool(
+            request and "gzip" in request.headers.get("Accept-Encoding", "").casefold()
+        ),
+        state_version=state_version,
+    )
 
 
 @router.get("/capacity", response_model=CapacityResponse)
 def operator_capacity(
     principal: Principal = Depends(require_roles(*OPERATOR_ROLES)),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
-    settings = get_settings()
-    tenants = []
-    conflicts = []
-    active_total = 0
-    for membership in _operator_tenant_sessions(principal, db):
-        tenant_db = SessionLocal()
+    memberships = _operator_tenant_sessions(principal, db)
+    state_version = _operator_projection_state(principal, db, memberships)
+
+    def build():
+        settings = get_settings()
+        tenants = []
+        conflicts = []
+        active_total = 0
+        machine_active_statuses = ("dispatch_pending", "running", "delegated", "cancel_pending")
         try:
-            set_tenant_context(tenant_db, membership.tenant_id, principal.user_id)
-            tenant = tenant_db.get(Tenant, membership.tenant_id)
-            active = tenant_db.query(ServiceWorkItem).filter_by(tenant_id=membership.tenant_id, status="in_progress").count()
-            queued = tenant_db.query(ServiceWorkItem).filter_by(tenant_id=membership.tenant_id, status="queued").count()
-            blocked = tenant_db.query(ServiceWorkItem).filter_by(tenant_id=membership.tenant_id, status="blocked").count()
-            active_total += active
-            item = {
-                "tenant_id": membership.tenant_id,
-                "tenant_name": tenant.name if tenant else membership.tenant_id,
-                "active": active,
-                "queued": queued,
-                "blocked": blocked,
-                "limit": settings.service_wip_per_tenant_limit,
-                "over_capacity": active > settings.service_wip_per_tenant_limit,
-            }
-            tenants.append(item)
-            if item["over_capacity"]:
-                conflicts.append({"type": "tenant_wip", **item})
+            for membership in memberships:
+                set_tenant_context(db, membership.tenant_id, principal.user_id)
+                tenant = db.get(Tenant, membership.tenant_id)
+                active = db.query(ServiceExecution).filter(
+                    ServiceExecution.tenant_id == membership.tenant_id,
+                    ServiceExecution.status.in_(machine_active_statuses),
+                ).count()
+                queued = db.query(ServiceWorkItem).filter_by(tenant_id=membership.tenant_id, status="queued").count()
+                blocked = db.query(ServiceWorkItem).filter_by(tenant_id=membership.tenant_id, status="blocked").count()
+                active_total += active
+                item = {
+                    "tenant_id": membership.tenant_id,
+                    "tenant_name": tenant.name if tenant else membership.tenant_id,
+                    "active": active,
+                    "queued": queued,
+                    "blocked": blocked,
+                    "limit": settings.service_wip_per_tenant_limit,
+                    "over_capacity": active > settings.service_wip_per_tenant_limit,
+                }
+                tenants.append(item)
+                if item["over_capacity"]:
+                    conflicts.append({"type": "tenant_wip", **item})
         finally:
-            tenant_db.close()
-    if active_total > settings.service_wip_global_limit:
-        conflicts.insert(0, {"type": "global_wip", "active": active_total, "limit": settings.service_wip_global_limit})
-    return CapacityResponse(
-        generated_at=datetime.utcnow(),
-        global_limit=settings.service_wip_global_limit,
-        active_total=active_total,
-        available_slots=max(0, settings.service_wip_global_limit - active_total),
-        over_capacity=active_total > settings.service_wip_global_limit,
-        per_tenant_limit=settings.service_wip_per_tenant_limit,
-        tenants=tenants,
-        conflicts=conflicts,
+            set_tenant_context(db, principal.tenant_id, principal.user_id)
+        if active_total > settings.service_wip_global_limit:
+            conflicts.insert(0, {"type": "global_wip", "active": active_total, "limit": settings.service_wip_global_limit})
+        return CapacityResponse(
+            generated_at=datetime.utcnow(),
+            global_limit=settings.service_wip_global_limit,
+            active_total=active_total,
+            available_slots=max(0, settings.service_wip_global_limit - active_total),
+            over_capacity=active_total > settings.service_wip_global_limit,
+            per_tenant_limit=settings.service_wip_per_tenant_limit,
+            tenants=tenants,
+            conflicts=conflicts,
+        )
+
+    if request is None:
+        response = build()
+        db.rollback()
+        return response
+    return _tenant_projection(
+        db,
+        tenant_id=principal.tenant_id,
+        projection=f"operator-capacity:{principal.user_id}",
+        build=build,
+        accepts_gzip=bool(
+            request and "gzip" in request.headers.get("Accept-Encoding", "").casefold()
+        ),
+        state_version=state_version,
     )

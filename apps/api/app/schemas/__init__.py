@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -18,6 +18,15 @@ class MemberCreate(BaseModel):
     email: str = ""
     name: str = ""
     role: str = "operator"
+    operator_profile: Literal[
+        "generalist", "business_analyst", "software_engineer", "qa_quality", "governance_risk"
+    ] = "generalist"
+
+
+class OperatorProfileUpdate(BaseModel):
+    operator_profile: Literal[
+        "generalist", "business_analyst", "software_engineer", "qa_quality", "governance_risk"
+    ]
 
 
 class ToolPolicyCreate(BaseModel):

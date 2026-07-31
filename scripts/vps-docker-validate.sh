@@ -146,7 +146,7 @@ wait_for_ai_native_evidence() {
       && [ "$manifest_valid" -eq 1 ] \
       && [ "$status" = "waiting_for_human" ] \
       && [ "$package_status" = "200" ] \
-      && python3 -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) >= 85 else 1)' "$hrs"; then
+      && python3 -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) >= 90 else 1)' "$hrs"; then
       api_get "/runs/$run_id/validation-manifest" | python3 -c 'import json,sys; row=json.load(sys.stdin); reports=row["test_reports"]; steps=row["steps"]; failed=any(item["status"]=="failed" for item in reports); assert not failed or max(item["iteration"] for item in steps if item["node_id"]=="Engineer") >= 2; assert row["generation_fingerprint"]; assert row["generated_files"]'
       api_get "/runs/$run_id/delivery-package" | python3 -c 'import json,sys; row=json.load(sys.stdin); assert row.get("path", "").startswith("s3://"); assert row.get("manifest_json", {}).get("storage_prefix", "").startswith("tenants/")'
       api_get "/runs/$run_id/delivery-package/download" | python3 -c 'import io,sys,zipfile; archive=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())); assert "manifest.json" in archive.namelist()'

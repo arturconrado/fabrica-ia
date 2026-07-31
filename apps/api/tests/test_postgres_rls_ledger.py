@@ -10,13 +10,23 @@ from app.models import (
     AIInvocation,
     AgentDefinition,
     ArtifactFragment,
+    Contract,
+    Engagement,
+    EngagementDependency,
     ExecutionUnit,
     GlobalLearningDeployment,
     GlobalLearningPolicy,
     KnowledgeBase,
     ModelCall,
+    OfferingVersion,
+    PluginInvocation,
     Program,
     Project,
+    ServiceAcceptanceCheck,
+    ServiceCycle,
+    ServiceExecution,
+    ServiceOffering,
+    ServiceWorkItem,
     Tenant,
     WorkflowRun,
 )
@@ -60,6 +70,35 @@ def test_runtime_database_role_cannot_bypass_rls(postgres_sessions):
     assert role["rolname"] == "factory_app"
     assert role["rolsuper"] is False
     assert role["rolbypassrls"] is False
+
+
+def test_runtime_scheduler_can_discover_only_active_tenant_ids(postgres_sessions):
+    engine, _, AdminSession = postgres_sessions
+    suffix = uuid.uuid4().hex
+    active_id = f"scheduler-active-{suffix}"
+    inactive_id = f"scheduler-inactive-{suffix}"
+    admin = AdminSession()
+    try:
+        admin.add_all([
+            Tenant(id=active_id, name="Scheduler active", slug=active_id, status="active"),
+            Tenant(id=inactive_id, name="Scheduler inactive", slug=inactive_id, status="suspended"),
+        ])
+        admin.commit()
+    finally:
+        admin.close()
+
+    with engine.connect() as connection:
+        direct = connection.execute(
+            text("SELECT id FROM tenants WHERE id IN (:active_id, :inactive_id)"),
+            {"active_id": active_id, "inactive_id": inactive_id},
+        ).scalars().all()
+        discovered = connection.execute(
+            text("SELECT tenant_id FROM public.asf_active_tenant_ids()")
+        ).scalars().all()
+
+    assert direct == []
+    assert active_id in discovered
+    assert inactive_id not in discovered
 
 
 def test_runtime_role_can_read_only_rls_safe_aggregate_technical_metrics(postgres_sessions):
@@ -257,6 +296,88 @@ def test_postgres_rls_hides_cross_tenant_ai_invocation(postgres_sessions):
         db.close()
 
 
+def test_postgres_rls_hides_portfolio_execution_state(postgres_sessions):
+    _, Session, AdminSession = postgres_sessions
+    suffix = uuid.uuid4().hex
+    tenant_a = f"portfolio-a-{suffix}"
+    tenant_b = f"portfolio-b-{suffix}"
+    admin = AdminSession()
+    try:
+        admin.add_all([
+            Tenant(id=tenant_a, name="Portfolio A", slug=tenant_a),
+            Tenant(id=tenant_b, name="Portfolio B", slug=tenant_b),
+        ])
+        admin.flush()
+        offering = ServiceOffering(
+            id=str(uuid.uuid4()), code=f"portfolio-{suffix}", name="Portfolio RLS fixture",
+        )
+        admin.add(offering)
+        admin.flush()
+        version = OfferingVersion(
+            id=str(uuid.uuid4()), offering_id=offering.id, version="2.0", checksum=suffix,
+        )
+        contract = Contract(
+            id=str(uuid.uuid4()), tenant_id=tenant_a, contract_number=f"PORTFOLIO-{suffix}", status="active",
+        )
+        admin.add_all([version, contract])
+        admin.flush()
+        engagement = Engagement(
+            id=str(uuid.uuid4()), tenant_id=tenant_a, contract_id=contract.id,
+            offering_version_id=version.id, name="Private portfolio execution",
+        )
+        dependency_target = Engagement(
+            id=str(uuid.uuid4()), tenant_id=tenant_a, contract_id=contract.id,
+            offering_version_id=version.id, name="Private dependency target",
+        )
+        admin.add_all([engagement, dependency_target])
+        admin.flush()
+        cycle = ServiceCycle(
+            id=str(uuid.uuid4()), tenant_id=tenant_a, engagement_id=engagement.id, sequence=1,
+        )
+        admin.add(cycle)
+        admin.flush()
+        item = ServiceWorkItem(
+            id=str(uuid.uuid4()), tenant_id=tenant_a, engagement_id=engagement.id,
+            cycle_id=cycle.id, title="Private work item",
+        )
+        admin.add(item)
+        admin.flush()
+        execution = ServiceExecution(
+            id=str(uuid.uuid4()), tenant_id=tenant_a, engagement_id=engagement.id,
+            work_item_id=item.id, cycle_id=cycle.id,
+        )
+        check = ServiceAcceptanceCheck(
+            id=str(uuid.uuid4()), tenant_id=tenant_a, engagement_id=engagement.id,
+            cycle_id=cycle.id, cycle_key="cycle-1", check_key="private-check",
+            description="Private acceptance evidence",
+        )
+        dependency = EngagementDependency(
+            id=str(uuid.uuid4()), tenant_id=tenant_a, engagement_id=engagement.id,
+            depends_on_engagement_id=dependency_target.id,
+        )
+        admin.add_all([
+            execution,
+            check,
+            dependency,
+        ])
+        admin.commit()
+    finally:
+        admin.close()
+
+    db = Session()
+    try:
+        set_tenant_context(db, tenant_b)
+        for table, record_id in (
+            ("service_cycles", cycle.id),
+            ("service_executions", execution.id),
+            ("service_acceptance_checks", check.id),
+            ("engagement_dependencies", dependency.id),
+        ):
+            assert db.execute(text(f"SELECT id FROM {table} WHERE id = :id"), {"id": record_id}).first() is None
+    finally:
+        db.close()
+
+
 def test_postgres_rls_isolates_segmented_units_fragments_and_global_deployments(postgres_sessions):
     _, Session, AdminSession = postgres_sessions
     suffix = uuid.uuid4().hex
@@ -292,6 +413,22 @@ def test_postgres_rls_isolates_segmented_units_fragments_and_global_deployments(
         )
         admin.add(unit)
         admin.flush()
+        plugin_invocation = PluginInvocation(
+            id=str(uuid.uuid4()),
+            tenant_id=tenant_a,
+            run_id=run.id,
+            execution_unit_id=unit.id,
+            plugin_name="ponytail",
+            plugin_version="4.8.4",
+            source_revision="16f29800fd2681bdf24f3eb4ccffe38be3baec6b",
+            command="instructions",
+            mode="full",
+            node_id="Architect",
+            phase="architecture",
+            action="execute",
+            status="completed",
+            invocation_key=uuid.uuid4().hex,
+        )
         fragment = ArtifactFragment(
             id=str(uuid.uuid4()), tenant_id=tenant_a, run_id=run.id, execution_unit_id=unit.id,
             model_call_id=call.id, node_id="Architect", iteration=1, artifact_name="ARCHITECTURE.md",
@@ -309,7 +446,7 @@ def test_postgres_rls_isolates_segmented_units_fragments_and_global_deployments(
             id=str(uuid.uuid4()), tenant_id=tenant_a, policy_id=policy.id,
             policy_type=policy.policy_type, rollout_stage="active", status="active",
         )
-        admin.add_all([fragment, deployment])
+        admin.add_all([plugin_invocation, fragment, deployment])
         admin.commit()
     finally:
         admin.close()
@@ -319,6 +456,7 @@ def test_postgres_rls_isolates_segmented_units_fragments_and_global_deployments(
         set_tenant_context(db, tenant_b)
         assert db.query(ExecutionUnit).filter_by(id=unit.id).first() is None
         assert db.query(ArtifactFragment).filter_by(id=fragment.id).first() is None
+        assert db.query(PluginInvocation).filter_by(id=plugin_invocation.id).first() is None
         assert db.query(GlobalLearningDeployment).filter_by(id=deployment.id).first() is None
         visible_global = db.query(GlobalLearningPolicy).filter_by(id=policy.id).first()
         assert visible_global is not None

@@ -1,4 +1,5 @@
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -7,7 +8,13 @@ from sqlalchemy.orm import sessionmaker
 
 from app.agents.ai_native_context import TenantContextBuilder
 from app.agents.ai_native_contracts import AgentStepResult, ArtifactOutput, FileOperation
-from app.agents.ai_native_executor import AINativeExecutionError, AINativeWorkflowExecutor
+from app.agents.ai_native_executor import (
+    AINativeExecutionError,
+    AINativeWorkflowExecutor,
+    qa_failure_owner,
+    validate_workspace_path_ownership,
+    workspace_owner_for_path,
+)
 from app.auth.dependencies import ensure_tenant
 from app.core.config import get_settings
 from app.db.session import set_tenant_context
@@ -18,6 +25,7 @@ from app.models import (
     Base,
     FileChange,
     ModelCall,
+    PluginInvocation,
     Project,
     WorkflowDefinition,
     WorkflowRun,
@@ -29,7 +37,8 @@ from app.providers.model_gateway import (
     request_max_output_tokens,
     request_timeout_seconds,
 )
-from app.providers.cost_governor import AIInvocationScope, CostEnvelope
+from app.providers.cost_governor import AIInvocationScope, CostEnvelope, CostProjection, classify_retry
+import app.providers.model_gateway as model_gateway_module
 
 
 @pytest.fixture()
@@ -76,6 +85,64 @@ def test_agent_step_contract_rejects_paths_outside_generated_workspace():
         FileOperation(operation="create", path="../secrets.env", content="forbidden")
     with pytest.raises(ValidationError):
         FileOperation(operation="create", path="README.md", content="outside generated_app")
+
+
+@pytest.mark.parametrize(
+    ("path", "owner"),
+    [
+        ("generated_app/architecture/solution.md", "Architect"),
+        ("generated_app/backend/migrations/001_create.py", "Data Architect"),
+        ("generated_app/backend/schemas/order.py", "Data Architect"),
+        ("generated_app/contracts/openapi.yaml", "API Contract Engineer"),
+        ("generated_app/backend/app/main.py", "Engineer"),
+        ("generated_app/frontend/app/page.tsx", "Engineer"),
+        ("generated_app/README.md", "Engineer"),
+        ("generated_app/backend/tests/test_api.py", "QA Engineer"),
+        ("generated_app/frontend/app/page.spec.tsx", "QA Engineer"),
+        ("generated_app/e2e/release.spec.ts", "QA Engineer"),
+        ("generated_app/security/hardening.md", "Security Engineer"),
+        ("generated_app/Dockerfile", "DevOps Engineer"),
+        ("generated_app/docker-compose.yml", "DevOps Engineer"),
+        ("generated_app/.github/workflows/ci.yml", "DevOps Engineer"),
+        ("generated_app/deploy/runbook.md", "DevOps Engineer"),
+    ],
+)
+def test_v214_workspace_paths_have_exactly_one_discipline_owner(path, owner):
+    assert workspace_owner_for_path(path) == owner
+    validate_workspace_path_ownership(owner, path)
+    with pytest.raises(AINativeExecutionError, match="bounded owner"):
+        validate_workspace_path_ownership("Code Reviewer", path)
+
+
+def test_v214_workspace_ownership_fails_closed_for_unclassified_paths():
+    assert workspace_owner_for_path("generated_app/secrets.env") is None
+    with pytest.raises(AINativeExecutionError, match="bounded owner is none"):
+        validate_workspace_path_ownership("Engineer", "generated_app/secrets.env")
+
+
+def test_v214_qa_self_repairs_only_clear_test_authorship_failures():
+    authored_syntax_error = SimpleNamespace(
+        status="failed",
+        command="python -m pytest generated_app/backend/tests",
+        stdout="ERROR collecting generated_app/backend/tests/test_api.py\nSyntaxError",
+        stderr="",
+    )
+    product_failure = SimpleNamespace(
+        status="failed",
+        command="python -m pytest generated_app/backend/tests",
+        stdout="generated_app/backend/tests/test_api.py::test_create FAILED\nAssertionError: 500 != 201",
+        stderr="",
+    )
+    smoke_failure = SimpleNamespace(
+        status="failed",
+        command='python -c "from generated_app.backend.app.main import app; assert app"',
+        stdout="",
+        stderr="ModuleNotFoundError: generated_app.backend.app.main",
+    )
+
+    assert qa_failure_owner([authored_syntax_error]) == "QA Engineer"
+    assert qa_failure_owner([product_failure]) == "Engineer"
+    assert qa_failure_owner([authored_syntax_error, smoke_failure]) == "Engineer"
 
 
 def test_artifact_contract_allows_real_specs_but_keeps_a_bounded_limit():
@@ -199,6 +266,17 @@ def test_retry_routing_repairs_schema_and_repeats_transient_on_same_model():
     assert AINativeWorkflowExecutor._model_role_for_attempt(node, 2, "transient") == "fast"
     assert AINativeWorkflowExecutor._model_role_for_attempt(node, 2, "semantic_escalation") == "reasoning"
     assert AINativeWorkflowExecutor._model_role_for_attempt({"model_role": "code"}, 2, "semantic_escalation") == "code"
+
+
+@pytest.mark.parametrize(
+    "message",
+    (
+        "HTTP 402 Payment Required",
+        "Insufficient credits. Add more provider credits.",
+    ),
+)
+def test_provider_credit_failure_is_non_retryable(message):
+    assert classify_retry(message) == "budget_or_isolation"
 
 
 def test_context_bundle_never_contains_other_tenant_material(db):
@@ -371,6 +449,7 @@ def test_model_output_directly_creates_linked_artifact_file_and_step(db, tmp_pat
                 "outputs": ["IMPLEMENTATION_SUMMARY.md"],
                 "allowed_tools": ["write_workspace"],
                 "allowed_decisions": ["success"],
+                "cavekit_stages": ["build", "caveman"],
             },
             workflow_version="2.0.0",
             iteration=1,
@@ -386,6 +465,10 @@ def test_model_output_directly_creates_linked_artifact_file_and_step(db, tmp_pat
         assert all(change.model_call_id == step.model_call_id for change in changes)
         assert all(change.step_execution_id == step.id for change in changes)
         assert all(change.diff for change in changes)
+        cavekit_rows = db.query(PluginInvocation).filter_by(run_id=run.id, plugin_name="cavekit").all()
+        assert {row.command for row in cavekit_rows} == {"build", "caveman"}
+        assert {row.status for row in cavekit_rows} == {"completed"}
+        assert all((row.metadata_json or {}).get("step_execution_id") == step.id for row in cavekit_rows)
         assert (tmp_path / "workspaces" / "tenants" / "client-linked" / run.id / "generated_app/backend/app/main.py").is_file()
     finally:
         get_settings.cache_clear()
@@ -407,6 +490,7 @@ def test_invalid_model_output_remains_linked_to_failed_step(db):
                 "outputs": ["IMPLEMENTATION_SUMMARY.md"],
                 "allowed_tools": ["write_workspace"],
                 "allowed_decisions": ["success"],
+                "cavekit_stages": ["build", "caveman"],
             },
             workflow_version="2.2.0",
             iteration=1,
@@ -416,6 +500,9 @@ def test_invalid_model_output_remains_linked_to_failed_step(db):
     assert step.status == "failed"
     assert step.model_call_id
     assert db.get(ModelCall, step.model_call_id) is not None
+    cavekit_rows = db.query(PluginInvocation).filter_by(run_id=run.id, plugin_name="cavekit").all()
+    assert cavekit_rows and {row.status for row in cavekit_rows} == {"failed"}
+    assert all(row.error and (row.metadata_json or {}).get("evidence_type") for row in cavekit_rows)
 
 
 def test_provider_error_remains_linked_to_failed_step(db):
@@ -544,6 +631,48 @@ def test_gateway_records_actual_cost_and_blocks_a_call_that_exceeds_run_budget(d
     assert call.status == "budget_exceeded"
     assert call.estimated_cost_usd == 2.0
     assert run.ai_cost_usd == 2.0
+
+
+def test_gateway_enforces_homologation_budget_across_tenants(db, monkeypatch):
+    first = _run(db, "client-global-budget-a", "run-global-budget-a")
+    second = _run(db, "client-global-budget-b", "run-global-budget-b")
+    db.add_all([
+        ModelCall(
+            id="call-global-budget-a",
+            tenant_id=first.tenant_id,
+            run_id=first.id,
+            model_name="asf-fast",
+            estimated_cost_usd=60.0,
+        ),
+        ModelCall(
+            id="call-global-budget-b",
+            tenant_id=second.tenant_id,
+            run_id=second.id,
+            model_name="asf-fast",
+            estimated_cost_usd=39.0,
+        ),
+    ])
+    db.commit()
+    monkeypatch.setattr(
+        model_gateway_module,
+        "get_settings",
+        lambda: SimpleNamespace(homologation_global_budget_usd=100.0),
+    )
+    scope = AIInvocationScope(
+        scope_type="system_validation",
+        scope_id="homologation-budget",
+        envelope=CostEnvelope(reserved_budget_usd=2.0),
+    )
+
+    with pytest.raises(ModelGatewayError, match="global budget exhausted"):
+        ModelGateway()._assert_budget(
+            db,
+            tenant_id=second.tenant_id,
+            run_id="",
+            invocation_id="homologation-global-budget",
+            scope=scope,
+            projection=CostProjection(),
+        )
 
 
 def test_gateway_groups_attempts_in_one_scoped_invocation(db):

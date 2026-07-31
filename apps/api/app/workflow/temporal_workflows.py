@@ -13,6 +13,83 @@ except Exception:  # pragma: no cover - imported only by worker with temporal in
 
 if activity is not None:
 
+    @activity.defn(name="execute_service_execution")
+    async def execute_service_execution_activity(payload: Dict[str, Any]) -> str:
+        def execute() -> str:
+            from app.db.session import SessionLocal, set_tenant_context
+            from app.models import ServiceExecution
+            from app.service_delivery.os_service import ServiceDeliveryOSService
+
+            db = SessionLocal()
+            try:
+                set_tenant_context(db, payload["tenant_id"])
+                result = ServiceDeliveryOSService().perform_execution(
+                    db, tenant_id=payload["tenant_id"], execution_id=payload["execution_id"],
+                    correlation_id=payload.get("temporal_workflow_id") or "service-delivery-temporal",
+                )
+                db.commit()
+                return f"{result.id}:{result.status}"
+            except Exception as exc:
+                db.rollback()
+                set_tenant_context(db, payload["tenant_id"])
+                execution = db.query(ServiceExecution).filter_by(
+                    id=payload["execution_id"], tenant_id=payload["tenant_id"]
+                ).first()
+                if execution and execution.status in {"cancel_pending", "cancelled"}:
+                    db.commit()
+                    from temporalio.exceptions import ApplicationError
+
+                    raise ApplicationError("Service execution was cancelled", non_retryable=True) from exc
+                terminal = False
+                if execution:
+                    terminal = ServiceDeliveryOSService().record_execution_failure(
+                        db,
+                        tenant_id=payload["tenant_id"],
+                        execution_id=execution.id,
+                        error=exc,
+                        correlation_id=payload.get("temporal_workflow_id") or "service-delivery-temporal",
+                    )
+                    db.commit()
+                if terminal:
+                    from temporalio.exceptions import ApplicationError
+
+                    raise ApplicationError("Service execution failed", non_retryable=True) from exc
+                raise
+            finally:
+                db.close()
+
+        stopped = asyncio.Event()
+
+        def persist_heartbeat() -> None:
+            from app.db.session import SessionLocal, set_tenant_context
+            from app.models import ServiceExecution, utcnow
+
+            heartbeat_db = SessionLocal()
+            try:
+                set_tenant_context(heartbeat_db, payload["tenant_id"])
+                heartbeat_db.query(ServiceExecution).filter_by(
+                    id=payload["execution_id"], tenant_id=payload["tenant_id"]
+                ).update({"heartbeat_at": utcnow()}, synchronize_session=False)
+                heartbeat_db.commit()
+            finally:
+                heartbeat_db.close()
+
+        async def send_heartbeats() -> None:
+            while not stopped.is_set():
+                activity.heartbeat({"execution_id": payload.get("execution_id"), "phase": "service_delivery"})
+                await asyncio.to_thread(persist_heartbeat)
+                try:
+                    await asyncio.wait_for(stopped.wait(), timeout=20)
+                except asyncio.TimeoutError:
+                    continue
+
+        heartbeat_task = asyncio.create_task(send_heartbeats())
+        try:
+            return await asyncio.to_thread(execute)
+        finally:
+            stopped.set()
+            await heartbeat_task
+
     @activity.defn(name="load_execution_plan")
     async def load_execution_plan_activity(payload: Dict[str, Any]) -> Dict[str, Any]:
         def load() -> Dict[str, Any]:
@@ -64,6 +141,69 @@ if activity is not None:
                 db.close()
 
         return await asyncio.to_thread(load)
+
+    @activity.defn(name="mark_ai_native_run_failed")
+    async def mark_ai_native_run_failed_activity(payload: Dict[str, Any]) -> str:
+        def mark() -> str:
+            from app.db.session import SessionLocal, set_tenant_context
+            from app.events.event_service import emit_event
+            from app.models import AgentRunState, AgentStepExecution, ExecutionUnit, WorkflowNodeState, WorkflowRun, utcnow
+            from app.service_delivery.capacity import release_workflow_slot
+
+            db = SessionLocal()
+            try:
+                set_tenant_context(db, payload["tenant_id"])
+                run = db.query(WorkflowRun).filter_by(
+                    id=payload["run_id"], tenant_id=payload["tenant_id"]
+                ).first()
+                if not run or run.status in {
+                    "failed", "cancelled", "rejected", "approved_for_homologation",
+                    "synthetic_approved_for_homologation",
+                }:
+                    return f"{payload['run_id']}:{run.status if run else 'missing'}"
+                reason = str(payload.get("error") or "Temporal workflow failed")[:8000]
+                now = utcnow()
+                for unit in db.query(ExecutionUnit).filter_by(
+                    tenant_id=run.tenant_id, run_id=run.id, status="running"
+                ).all():
+                    unit.status = "failed"
+                    unit.error = reason
+                    unit.finished_at = now
+                    unit.last_heartbeat_at = now
+                for step in db.query(AgentStepExecution).filter_by(
+                    tenant_id=run.tenant_id, run_id=run.id, status="running"
+                ).all():
+                    step.status = "failed"
+                    step.error = reason
+                    step.finished_at = now
+                for state in db.query(WorkflowNodeState).filter_by(
+                    tenant_id=run.tenant_id, run_id=run.id, status="running"
+                ).all():
+                    state.status = "failed"
+                    state.summary = reason
+                    state.finished_at = now
+                control = db.query(AgentRunState).filter_by(
+                    tenant_id=run.tenant_id, run_id=run.id, agent_name="RUN_CONTROL"
+                ).first()
+                if control:
+                    control.status = "failed"
+                    control.current_sop_step = "temporal_terminal_failure"
+                    control.outputs_json = [item for item in (control.outputs_json or []) if item != "temporal_activity_active"]
+                run.status = "failed"
+                run.current_phase = "blocked"
+                run.finished_at = now
+                release_workflow_slot(db, run.id)
+                emit_event(
+                    db, run.id, "run.failed", "Temporal closed after bounded retries.",
+                    node_id=run.current_node, phase=run.current_phase, status="failed",
+                    payload={"reason": reason, "temporal_workflow_id": payload.get("temporal_workflow_id")},
+                )
+                db.commit()
+                return f"{run.id}:failed"
+            finally:
+                db.close()
+
+        return await asyncio.to_thread(mark)
 
     async def _execute_one_node(payload: Dict[str, Any]) -> Dict[str, Any]:
         def execute() -> Dict[str, Any]:
@@ -326,7 +466,7 @@ if activity is not None:
                 ).first()
                 if not marker_run:
                     raise RuntimeError(f"Temporal activity run is missing: {payload['run_id']}")
-                control = provider._control_state(marker_db, marker_run)
+                control = provider.control_state(marker_db, marker_run)
                 control.outputs_json = sorted(set(control.outputs_json or []) | {"temporal_activity_active"})
                 marker_db.commit()
             finally:
@@ -383,17 +523,42 @@ if activity is not None:
 
 if workflow is not None:
 
+    @workflow.defn(name="ServiceDeliveryExecutionWorkflow")
+    class ServiceDeliveryExecutionWorkflow:
+        @workflow.run
+        async def run(self, payload: Dict[str, Any]) -> str:
+            return await workflow.execute_activity(
+                execute_service_execution_activity,
+                payload,
+                start_to_close_timeout=timedelta(hours=8),
+                schedule_to_close_timeout=timedelta(hours=24),
+                heartbeat_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+
     @workflow.defn(name="SoftwareFactoryAINativeWorkflowV2")
     class SoftwareFactoryAINativeWorkflowV2:
         def __init__(self) -> None:
             self._decision: Dict[str, Any] = {}
             self._control: Dict[str, Any] = {}
 
+        async def _execute(self, activity_fn, activity_payload: Dict[str, Any], **options):
+            try:
+                return await workflow.execute_activity(activity_fn, activity_payload, **options)
+            except Exception as exc:
+                await workflow.execute_activity(
+                    mark_ai_native_run_failed_activity,
+                    {**activity_payload, "error": str(exc)[:8000]},
+                    start_to_close_timeout=timedelta(minutes=2),
+                    retry_policy=RetryPolicy(maximum_attempts=5),
+                )
+                raise
+
         @workflow.run
         async def run(self, payload: Dict[str, Any]) -> str:
             activity_retry = RetryPolicy(maximum_attempts=3)
             while True:
-                plan = await workflow.execute_activity(
+                plan = await self._execute(
                     load_execution_plan_activity,
                     payload,
                     start_to_close_timeout=timedelta(minutes=2),
@@ -411,7 +576,7 @@ if workflow is not None:
                 if plan.get("terminal"):
                     return f"{payload['run_id']}:{plan.get('status')}"
                 if plan.get("waiting_for_human"):
-                    await workflow.execute_activity(
+                    await self._execute(
                         prepare_human_approval_activity,
                         payload,
                         start_to_close_timeout=timedelta(minutes=2),
@@ -424,7 +589,7 @@ if workflow is not None:
                     self._decision = {}
                     if decision.get("decision") == "changes_requested":
                         continue
-                    await workflow.execute_activity(
+                    await self._execute(
                         finalize_delivery_activity,
                         {**payload, "decision": decision.get("decision")},
                         start_to_close_timeout=timedelta(minutes=5),
@@ -434,7 +599,7 @@ if workflow is not None:
 
                 node_payload = {**payload, **plan}
                 node_activity = execute_atomic_node_activity if plan.get("strategy") == "atomic" else plan_segmented_node_activity
-                node_result = await workflow.execute_activity(
+                node_result = await self._execute(
                     node_activity,
                     node_payload,
                     start_to_close_timeout=timedelta(seconds=max(300, int(plan.get("timeout_seconds") or 3600))),
@@ -443,7 +608,7 @@ if workflow is not None:
                 )
                 if node_result.get("status") == "budget_paused":
                     continue
-                refreshed = await workflow.execute_activity(
+                refreshed = await self._execute(
                     load_execution_plan_activity,
                     payload,
                     start_to_close_timeout=timedelta(minutes=2),
@@ -452,7 +617,7 @@ if workflow is not None:
                 if plan.get("strategy") != "atomic":
                     unit_budget_paused = False
                     for unit_id in node_result.get("execution_unit_ids") or []:
-                        unit_result = await workflow.execute_activity(
+                        unit_result = await self._execute(
                             execute_output_unit_activity,
                             {**payload, "node_id": plan.get("current_node"), "execution_unit_id": unit_id},
                             start_to_close_timeout=timedelta(seconds=max(300, int(plan.get("timeout_seconds") or 3600))),
@@ -464,7 +629,7 @@ if workflow is not None:
                             break
                     if unit_budget_paused:
                         continue
-                    assembly_result = await workflow.execute_activity(
+                    assembly_result = await self._execute(
                         assemble_artifact_activity,
                         {**payload, "node_id": plan.get("current_node")},
                         start_to_close_timeout=timedelta(minutes=2),
@@ -473,14 +638,14 @@ if workflow is not None:
                     if assembly_result.get("status") == "budget_paused":
                         continue
                 if plan.get("required_profiles"):
-                    await workflow.execute_activity(
+                    await self._execute(
                         run_sandbox_profile_activity,
                         {**payload, "node_id": plan.get("current_node")},
                         start_to_close_timeout=timedelta(minutes=2),
                         retry_policy=activity_retry,
                     )
                 if plan.get("current_node") == "Quality Governor":
-                    await workflow.execute_activity(
+                    await self._execute(
                         evaluate_quality_activity,
                         payload,
                         start_to_close_timeout=timedelta(minutes=2),

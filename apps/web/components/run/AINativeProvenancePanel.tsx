@@ -25,12 +25,16 @@ export function AINativeProvenancePanel({
   validation: ValidationManifest;
 }) {
   const [analysis, setAnalysis] = useState<TokenAnalysis | null>(null);
+  const [pluginAnalysis, setPluginAnalysis] = useState<PluginAnalysis | null>(null);
   const [analysisError, setAnalysisError] = useState("");
   useEffect(() => {
     let active = true;
-    apiGet<TokenAnalysis>(`/runs/${runId}/token-analysis`)
-      .then((value) => { if (active) setAnalysis(value); })
-      .catch((reason) => { if (active) setAnalysisError(reason instanceof Error ? reason.message : "Falha ao carregar análise de tokens"); });
+    Promise.all([
+      apiGet<TokenAnalysis>(`/runs/${runId}/token-analysis`),
+      apiGet<PluginAnalysis>(`/runs/${runId}/plugins`)
+    ])
+      .then(([tokens, plugins]) => { if (active) { setAnalysis(tokens); setPluginAnalysis(plugins); } })
+      .catch((reason) => { if (active) setAnalysisError(reason instanceof Error ? reason.message : "Falha ao carregar análise AI-native"); });
     return () => { active = false; };
   }, [runId]);
   const calls = validation.model_calls || [];
@@ -39,6 +43,7 @@ export function AINativeProvenancePanel({
   const actual = budget.actual_usd ?? ai.cost_usd;
   const limit = budget.limit_usd ?? ai.budget_usd;
   const withinBudget = budget.within_budget ?? ai.within_budget;
+  const cavekitInvocations = (pluginAnalysis?.invocations || []).filter((invocation) => invocation.plugin_name === "cavekit");
 
   return (
     <div className="space-y-4">
@@ -59,6 +64,7 @@ export function AINativeProvenancePanel({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-semibold text-ink">{unit.node_id} · {unit.unit_key}</span><StatusBadge status={unit.status} /></div>
               <div className="mt-1 text-xs text-[rgb(var(--muted))]">{unit.strategy} / {unit.unit_type} · iteração {unit.iteration} · ordem {unit.order_index} · {unit.attempt_count} tentativas · {unit.continuation_count} continuações</div>
+              {unit.optimization_policy_version ? <div className="mt-1 text-xs text-cyan-300">Contexto {unit.optimization_policy_version}: {integer(unit.source_input_tokens)} → {integer(unit.estimated_input_tokens)} tokens · {integer(unit.saved_input_tokens)} evitados</div> : null}
               {unit.targets_json?.length ? <div className="mt-2 truncate font-mono text-[10px] text-[rgb(var(--muted))]" title={unit.targets_json.join(", ")}>{unit.targets_json.join(" · ")}</div> : null}
             </div>
             <div className="text-xs text-[rgb(var(--muted))] lg:text-right">
@@ -72,6 +78,56 @@ export function AINativeProvenancePanel({
 
       <Surface>
         <div className="border-b border-line px-4 py-3">
+          <h2 className="text-sm font-semibold text-ink">Ponytail e Cavekit em produção</h2>
+          <p className="mt-1 text-xs text-[rgb(var(--muted))]">Versões fixadas, comandos auditados e métricas calculadas somente a partir desta run.</p>
+        </div>
+        {pluginAnalysis ? (
+          <>
+            <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricCard label="Comandos concluídos" value={integer(pluginAnalysis.coverage.completed)} detail={`${integer(pluginAnalysis.coverage.not_applicable)} não aplicáveis · ${integer(pluginAnalysis.coverage.registered)} em curso · ${integer(pluginAnalysis.coverage.failed)} falhas`} />
+              <MetricCard label="Arquivos gerados" value={integer(pluginAnalysis.measured.generated_files)} detail={`${integer(pluginAnalysis.measured.non_blank_lines)} linhas não vazias`} />
+              <MetricCard label="Dependências" value={integer(pluginAnalysis.measured.declared_dependencies)} detail="Manifestos persistidos" />
+              <MetricCard label="Custo real" value={money(pluginAnalysis.measured.model_cost_usd)} detail={`Política ${pluginAnalysis.policy_version || "—"}`} />
+            </div>
+            {pluginAnalysis.coverage.failed > 0 ? <div className="border-t border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200" role="alert">A política de plugins está bloqueada por {pluginAnalysis.coverage.failed} falha(s) auditada(s).</div> : null}
+            <div className="divide-y divide-line border-t border-line">
+              {pluginAnalysis.manifests.map((manifest) => (
+                <article key={manifest.name} className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                  <div>
+                    <div className="text-sm font-semibold text-ink">{manifest.name} · {manifest.version}</div>
+                    <div className="mt-1 text-xs text-[rgb(var(--muted))]">{manifest.capabilities.join(" · ")}</div>
+                    {manifest.codex_plugin_selector ? <div className="mt-1 text-xs text-cyan-300">Codex {manifest.codex_plugin_selector} · modo {manifest.codex_default_mode || "full"}</div> : null}
+                  </div>
+                  <div className="font-mono text-[10px] text-[rgb(var(--muted))] sm:text-right" title={manifest.source_revision}>{shortId(manifest.source_revision)}</div>
+                </article>
+              ))}
+            </div>
+            {cavekitInvocations.length ? (
+              <div className="max-h-72 divide-y divide-line overflow-y-auto border-t border-line" aria-label="Lifecycle verificável do Cavekit">
+                {cavekitInvocations.map((invocation, index) => (
+                  <article key={textValue(invocation.id, `${index}`)} className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold text-ink">Cavekit · {textValue(invocation.command)}</span>
+                        <StatusBadge status={textValue(invocation.status, "unknown")} />
+                      </div>
+                      <div className="mt-1 text-xs text-[rgb(var(--muted))]">{textValue(invocation.node_id)} · {textValue(invocation.action)}</div>
+                    </div>
+                    <div className="font-mono text-[10px] text-[rgb(var(--muted))] sm:text-right" title={textValue(invocation.output_hash)}>
+                      evidência {shortId(textValue(invocation.output_hash))}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : null}
+            {pluginAnalysis.coverage.commands.length ? <div className="border-t border-line px-4 py-3 font-mono text-[10px] text-[rgb(var(--muted))]">{pluginAnalysis.coverage.commands.join(" · ")}</div> : null}
+            <div className="border-t border-line px-4 py-3 text-xs text-[rgb(var(--muted))]">{pluginAnalysis.benchmark_boundary}</div>
+          </>
+        ) : <div className="p-4 text-sm text-[rgb(var(--muted))]" aria-live="polite">Carregando proveniência dos plugins…</div>}
+      </Surface>
+
+      <Surface>
+        <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold text-ink">Eficiência e orçamento v2.13</h2>
           <p className="mt-1 text-xs text-[rgb(var(--muted))]">Contexto e roteamento são calculados; tokens, cache e custo vêm do provider real.</p>
         </div>
@@ -81,6 +137,7 @@ export function AINativeProvenancePanel({
               <MetricCard label="Tokens úteis" value={integer(analysis.totals.context_selected_tokens)} detail="Contexto selecionado" />
               <MetricCard label="Tokens citados" value={integer(analysis.efficiency.context_cited_tokens)} detail={`${integer(analysis.efficiency.context_selected_not_cited_tokens)} selecionados sem citação`} />
               <MetricCard label="Contexto descartado" value={integer(analysis.totals.context_discarded_tokens)} detail="Fora do orçamento do papel" />
+              <MetricCard label="Compactação por unidade" value={percent(analysis.efficiency.compact_savings_ratio)} detail={`${integer(analysis.efficiency.compact_saved_tokens)} tokens evitados antes da chamada`} />
               <MetricCard label="Uso da saída" value={percent(analysis.efficiency.output_utilization)} detail="Resposta real sobre limite concedido" />
               <MetricCard label="Cache provider" value={integer(analysis.efficiency.actual_cache_read_tokens)} detail={`${integer(analysis.efficiency.cache_eligible_tokens)} elegíveis · ${integer(analysis.efficiency.cache_write_tokens)} escritos`} />
               <MetricCard label="Custo de retries" value={money(analysis.efficiency.retry_cost_usd)} detail={`${integer(analysis.efficiency.retry_tokens)} tokens`} />
@@ -177,6 +234,12 @@ export function AINativeProvenancePanel({
 
 type TokenAnalysis = components["schemas"]["TokenAnalysisResponse"];
 
+type PluginAnalysis = components["schemas"]["RunPluginAnalysisResponse"];
+
+function textValue(value: unknown, fallback = "—") {
+  return typeof value === "string" && value ? value : fallback;
+}
+
 function integer(value?: number | null) {
   return value == null ? "—" : new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 }).format(value);
 }
@@ -199,6 +262,9 @@ function invariantLabel(value: string) {
     all_non_human_steps_have_model_call: "Etapas intelectuais ligadas à IA",
     all_ai_workflow_nodes_completed: "Todos os papéis AI-native concluídos",
     generated_application_initializes: "Backend inicializa e frontend compila",
-    ai_native_workflow_only: "Workflow v2 sem executor legado"
+    ai_native_workflow_only: "Workflow v2 sem executor legado",
+    mandatory_plugin_coverage: "Ponytail e Cavekit concluídos ou não aplicáveis",
+    cavekit_stage_evidence_complete: "Cavekit terminal com evidência por estágio",
+    verified_contract_traceability: "Requisito, arquivo e teste ligados por evidência verificada"
   } as Record<string, string>)[value] || value.replaceAll("_", " ");
 }

@@ -126,6 +126,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/me/operator-profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Operator Profile */
+        patch: operations["update_operator_profile_auth_me_operator_profile_patch"];
+        trace?: never;
+    };
     "/tenants": {
         parameters: {
             query?: never;
@@ -360,6 +377,23 @@ export interface paths {
         };
         /** Get Validation Manifest */
         get: operations["get_validation_manifest_runs__run_id__validation_manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run Plugins */
+        get: operations["get_run_plugins_runs__run_id__plugins_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1646,6 +1680,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Production Plugins */
+        get: operations["production_plugins_api_v1_admin_plugins_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/operator/slo": {
         parameters: {
             query?: never;
@@ -2602,6 +2653,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/service-catalog/versions/{version_label}/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Portfolio Version Readiness */
+        get: operations["portfolio_version_readiness_api_v1_service_catalog_versions__version_label__readiness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/service-catalog/versions/{version_label}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decide Portfolio Version */
+        post: operations["decide_portfolio_version_api_v1_service_catalog_versions__version_label__decision_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/service-catalog/versions/{version_label}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Portfolio Validation Evidence */
+        post: operations["record_portfolio_validation_evidence_api_v1_service_catalog_versions__version_label__evidence_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/platform-readiness/evaluations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Platform Readiness Evaluation */
+        post: operations["create_platform_readiness_evaluation_api_v1_admin_platform_readiness_evaluations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/client-operations/overview": {
         parameters: {
             query?: never;
@@ -2671,6 +2790,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/engagements/{engagement_id}/package/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download Engagement Package */
+        get: operations["download_engagement_package_api_v1_engagements__engagement_id__package_download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/engagements/{engagement_id}/plans/generate": {
         parameters: {
             query?: never;
@@ -2722,6 +2858,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/engagements/{engagement_id}/cycles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Service Cycle */
+        post: operations["create_service_cycle_api_v1_engagements__engagement_id__cycles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/engagements/{engagement_id}/acceptance-checks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Service Acceptance Checks */
+        get: operations["list_service_acceptance_checks_api_v1_engagements__engagement_id__acceptance_checks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/engagements/{engagement_id}/acceptance-checks/{check_id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Service Acceptance Evidence */
+        post: operations["record_service_acceptance_evidence_api_v1_engagements__engagement_id__acceptance_checks__check_id__evidence_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/engagements/{engagement_id}/acceptance-checks/{check_id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decide Service Acceptance Check */
+        post: operations["decide_service_acceptance_check_api_v1_engagements__engagement_id__acceptance_checks__check_id__decision_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/service-work-items": {
         parameters: {
             query?: never;
@@ -2756,6 +2960,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/service-work-items/{item_id}/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Execute Service Work Item */
+        post: operations["execute_service_work_item_api_v1_service_work_items__item_id__execute_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/service-executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Service Executions */
+        get: operations["list_service_executions_api_v1_service_executions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/service-executions/{execution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Service Execution */
+        get: operations["get_service_execution_api_v1_service_executions__execution_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/service-executions/{execution_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Service Execution */
+        post: operations["retry_service_execution_api_v1_service_executions__execution_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/service-executions/{execution_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Service Execution */
+        post: operations["cancel_service_execution_api_v1_service_executions__execution_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/service-deliverables": {
         parameters: {
             query?: never;
@@ -2782,6 +3071,23 @@ export interface paths {
         };
         /** Get Service Deliverable */
         get: operations["get_service_deliverable_api_v1_service_deliverables__deliverable_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/service-deliverables/{deliverable_id}/package/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download Service Deliverable Package */
+        get: operations["download_service_deliverable_package_api_v1_service_deliverables__deliverable_id__package_download_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3272,6 +3578,46 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** AcceptanceDecisionRequest */
+        AcceptanceDecisionRequest: {
+            /** Expected Version */
+            expected_version: number;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "reject" | "external_constraint";
+            /** Comment */
+            comment: string;
+            /**
+             * Validation Mode
+             * @default real
+             * @enum {string}
+             */
+            validation_mode: "real" | "synthetic";
+        };
+        /** AcceptanceEvidenceRequest */
+        AcceptanceEvidenceRequest: {
+            /** Expected Version */
+            expected_version: number;
+            /** Evidence Refs */
+            evidence_refs: string[];
+            /**
+             * External Constraint
+             * @default false
+             */
+            external_constraint: boolean;
+            /**
+             * Impact
+             * @default
+             */
+            impact: string;
+            /**
+             * Mitigation
+             * @default
+             */
+            mitigation: string;
+        };
         /** Achievement */
         Achievement: {
             /** Code */
@@ -3522,13 +3868,16 @@ export interface components {
              * @enum {string}
              */
             decision: "approve" | "reject" | "changes_requested";
-            /**
-             * Comment
-             * @default
-             */
+            /** Comment */
             comment: string;
             /** Expected Version */
             expected_version: number;
+            /**
+             * Validation Mode
+             * @default real
+             * @enum {string}
+             */
+            validation_mode: "real" | "synthetic";
         };
         /** DeliverableDeliveryRequest */
         DeliverableDeliveryRequest: {
@@ -3536,6 +3885,12 @@ export interface components {
             expected_version: number;
             /** Comment */
             comment: string;
+            /**
+             * Validation Mode
+             * @default real
+             * @enum {string}
+             */
+            validation_mode: "real" | "synthetic";
         };
         /** DeliverableGenerateRequest */
         DeliverableGenerateRequest: {
@@ -3619,6 +3974,8 @@ export interface components {
             service_levels?: {
                 [key: string]: unknown;
             };
+            /** Dependency Engagement Ids */
+            dependency_engagement_ids?: string[];
         };
         /** EnterpriseRunCreate */
         EnterpriseRunCreate: {
@@ -3750,6 +4107,18 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /** GuidanceProvenance */
+        GuidanceProvenance: {
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "ai" | "deterministic_fallback";
+            /** Model Call Id */
+            model_call_id?: string | null;
+            /** Generated From */
+            generated_from?: string[];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -3840,6 +4209,12 @@ export interface components {
              * @default operator
              */
             role: string;
+            /**
+             * Operator Profile
+             * @default generalist
+             * @enum {string}
+             */
+            operator_profile: "generalist" | "business_analyst" | "software_engineer" | "qa_quality" | "governance_risk";
         };
         /** MetricValue */
         MetricValue: {
@@ -3868,6 +4243,16 @@ export interface components {
             /** Href */
             href: string;
         };
+        /** OfferingVersionDecisionRequest */
+        OfferingVersionDecisionRequest: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "activate" | "reject";
+            /** Comment */
+            comment: string;
+        };
         /** OfferingView */
         OfferingView: {
             /** Id */
@@ -3886,6 +4271,11 @@ export interface components {
             version_id: string;
             /** Version */
             version: string;
+            /**
+             * Version Status
+             * @enum {string}
+             */
+            version_status: "candidate" | "active" | "superseded" | "rejected";
             /** Duration Label */
             duration_label: string;
             /** Cadence */
@@ -3896,6 +4286,38 @@ export interface components {
             };
             /** Checksum */
             checksum: string;
+        };
+        /** OperationalGuidance */
+        OperationalGuidance: {
+            action: components["schemas"]["NextAction"];
+            /** Why Now */
+            why_now: string;
+            /** Checks */
+            checks?: string[];
+            /** Risks */
+            risks?: string[];
+            /**
+             * Draft
+             * @default
+             */
+            draft: string;
+            /** Evidence Refs */
+            evidence_refs?: string[];
+            /** Confidence */
+            confidence: number;
+            provenance: components["schemas"]["GuidanceProvenance"];
+            /** State Hash */
+            state_hash: string;
+            /** Generated At */
+            generated_at: string;
+        };
+        /** OperatorProfileUpdate */
+        OperatorProfileUpdate: {
+            /**
+             * Operator Profile
+             * @enum {string}
+             */
+            operator_profile: "generalist" | "business_analyst" | "software_engineer" | "qa_quality" | "governance_risk";
         };
         /** OpportunityApprovalPayload */
         OpportunityApprovalPayload: {
@@ -3995,6 +4417,12 @@ export interface components {
             comment: string;
             /** Expected Version */
             expected_version: number;
+            /**
+             * Validation Mode
+             * @default real
+             * @enum {string}
+             */
+            validation_mode: "real" | "synthetic";
         };
         /** PlanGenerateRequest */
         PlanGenerateRequest: {
@@ -4005,12 +4433,189 @@ export interface components {
             /** Knowledge Base Ids */
             knowledge_base_ids?: string[];
         };
+        /** PlatformReadinessEvaluationRequest */
+        PlatformReadinessEvaluationRequest: {
+            /**
+             * Evaluation Type
+             * @enum {string}
+             */
+            evaluation_type: "internal_assisted_pilot_ready" | "market_ready";
+            /**
+             * Portfolio Version
+             * @default 2.1
+             * @enum {string}
+             */
+            portfolio_version: "2.0" | "2.1";
+            /** Comment */
+            comment: string;
+        };
+        /** PluginArtifactResponse */
+        PluginArtifactResponse: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Evidence Classification */
+            evidence_classification: string;
+            /** Created At */
+            created_at: string;
+        };
+        /** PluginCoverageResponse */
+        PluginCoverageResponse: {
+            /** Commands */
+            commands: string[];
+            /** Completed */
+            completed: number;
+            /** Registered */
+            registered: number;
+            /** Not Applicable */
+            not_applicable: number;
+            /** Failed */
+            failed: number;
+        };
+        /** PluginManifestResponse */
+        PluginManifestResponse: {
+            /** Name */
+            name: string;
+            /** Version */
+            version: string;
+            /** Source Revision */
+            source_revision: string;
+            /** Source Url */
+            source_url: string;
+            /** License */
+            license: string;
+            /** Capabilities */
+            capabilities: string[];
+            /** Access Mode */
+            access_mode: string;
+            /** Automatic Updates */
+            automatic_updates: boolean;
+            /** Codex Plugin Selector */
+            codex_plugin_selector?: string | null;
+            /** Codex Default Mode */
+            codex_default_mode?: string | null;
+            /** Manifest Sha256 */
+            manifest_sha256: string;
+        };
+        /** PluginMeasuredResponse */
+        PluginMeasuredResponse: {
+            /** Generated Files */
+            generated_files: number;
+            /** Non Blank Lines */
+            non_blank_lines: number;
+            /** Declared Dependencies */
+            declared_dependencies: number;
+            /** Dependency Names */
+            dependency_names: string[];
+            /** Model Cost Usd */
+            model_cost_usd: number;
+            /**
+             * Provenance
+             * @constant
+             */
+            provenance: "calculated_from_persisted_run";
+        };
+        /** PortfolioEvidenceArtifact */
+        PortfolioEvidenceArtifact: {
+            /** Ref */
+            ref: string;
+            /** Sha256 */
+            sha256: string;
+            /** Mime Type */
+            mime_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+        };
+        /** PortfolioEvidenceCheck */
+        PortfolioEvidenceCheck: {
+            /** Key */
+            key: string;
+            /** Passed */
+            passed: boolean;
+            /** Evidence Refs */
+            evidence_refs: string[];
+        };
         /** PortfolioResponse */
         PortfolioResponse: {
             /** Generated At */
             generated_at: string;
             /** Clients */
             clients: components["schemas"]["TenantSummary"][];
+        };
+        /** PortfolioValidationEvidenceRequest */
+        PortfolioValidationEvidenceRequest: {
+            /** Report Kind */
+            report_kind: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "passed" | "failed";
+            /** Content Markdown */
+            content_markdown: string;
+            /** Evidence Refs */
+            evidence_refs: string[];
+            /** Metrics */
+            metrics?: {
+                [key: string]: unknown;
+            };
+            manifest?: components["schemas"]["PortfolioValidationManifest"] | null;
+        };
+        /** PortfolioValidationManifest */
+        PortfolioValidationManifest: {
+            /**
+             * Schema Version
+             * @default portfolio-validation-v2
+             * @constant
+             */
+            schema_version: "portfolio-validation-v2";
+            /**
+             * Validation Mode
+             * @default real
+             * @enum {string}
+             */
+            validation_mode: "real" | "synthetic";
+            /**
+             * Environment
+             * @enum {string}
+             */
+            environment: "local" | "staging" | "production";
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Finished At
+             * Format: date-time
+             */
+            finished_at: string;
+            /** Scenario Ids */
+            scenario_ids: string[];
+            /** Artifacts */
+            artifacts: components["schemas"]["PortfolioEvidenceArtifact"][];
+            /** Checks */
+            checks: components["schemas"]["PortfolioEvidenceCheck"][];
+            /** Metrics */
+            metrics?: {
+                [key: string]: unknown;
+            };
+            /** Validator User Ids */
+            validator_user_ids: string[];
+        };
+        /** ProductionPluginsResponse */
+        ProductionPluginsResponse: {
+            /** Plugins */
+            plugins: components["schemas"]["PluginManifestResponse"][];
+            /** Ponytail Help */
+            ponytail_help: {
+                [key: string]: unknown;
+            };
+            /** Security Boundary */
+            security_boundary: {
+                [key: string]: boolean;
+            };
         };
         /** ProgramPayload */
         ProgramPayload: {
@@ -4150,6 +4755,12 @@ export interface components {
              * @default
              */
             comment: string;
+            /**
+             * Validation Mode
+             * @default real
+             * @enum {string}
+             */
+            validation_mode: "real" | "synthetic";
         };
         /** ReviewInboxItem */
         ReviewInboxItem: {
@@ -4244,6 +4855,29 @@ export interface components {
             /** Project Id */
             project_id: string;
         };
+        /** RunPluginAnalysisResponse */
+        RunPluginAnalysisResponse: {
+            /** Run Id */
+            run_id: string;
+            /** Policy Version */
+            policy_version: string;
+            /** Manifests */
+            manifests: components["schemas"]["PluginManifestResponse"][];
+            /** Help */
+            help: {
+                [key: string]: unknown;
+            };
+            /** Invocations */
+            invocations: {
+                [key: string]: unknown;
+            }[];
+            coverage: components["schemas"]["PluginCoverageResponse"];
+            measured: components["schemas"]["PluginMeasuredResponse"];
+            /** Artifacts */
+            artifacts: components["schemas"]["PluginArtifactResponse"][];
+            /** Benchmark Boundary */
+            benchmark_boundary: string;
+        };
         /** RunWorkspaceResponse */
         RunWorkspaceResponse: {
             /** Run */
@@ -4297,10 +4931,51 @@ export interface components {
             artifact_fragments?: {
                 [key: string]: unknown;
             }[];
+            /** Plugin Invocations */
+            plugin_invocations?: {
+                [key: string]: unknown;
+            }[];
             /** Validation */
             validation?: {
                 [key: string]: unknown;
             };
+        };
+        /** ServiceCycleCreate */
+        ServiceCycleCreate: {
+            /** Expected Version */
+            expected_version: number;
+            /** Period Start */
+            period_start?: string | null;
+            /** Period End */
+            period_end?: string | null;
+            /** Comment */
+            comment: string;
+        };
+        /** ServiceExecutionCancelRequest */
+        ServiceExecutionCancelRequest: {
+            /** Expected Version */
+            expected_version: number;
+            /** Reason */
+            reason: string;
+        };
+        /** ServiceExecutionRequest */
+        ServiceExecutionRequest: {
+            /** Expected Version */
+            expected_version: number;
+            /**
+             * Instructions
+             * @default
+             */
+            instructions: string;
+            /** Knowledge Base Ids */
+            knowledge_base_ids?: string[];
+        };
+        /** ServiceExecutionRetryRequest */
+        ServiceExecutionRetryRequest: {
+            /** Expected Version */
+            expected_version: number;
+            /** Reason */
+            reason: string;
         };
         /** ServicePortfolioClient */
         ServicePortfolioClient: {
@@ -4391,6 +5066,7 @@ export interface components {
             /** Maturity Xp */
             maturity_xp: number;
             next_action?: components["schemas"]["NextAction"] | null;
+            guidance?: components["schemas"]["OperationalGuidance"] | null;
             /** Last Event At */
             last_event_at?: string | null;
         };
@@ -4429,6 +5105,14 @@ export interface components {
             selected_tokens?: number | null;
             /** Discarded Tokens */
             discarded_tokens?: number | null;
+            /** Unit Mode */
+            unit_mode?: string | null;
+            /** Unit Source Tokens */
+            unit_source_tokens?: number | null;
+            /** Unit Input Tokens */
+            unit_input_tokens?: number | null;
+            /** Unit Saved Tokens */
+            unit_saved_tokens?: number | null;
             /** References */
             references?: components["schemas"]["TokenReference"][];
             /** Discarded References */
@@ -4799,6 +5483,41 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_operator_profile_auth_me_operator_profile_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperatorProfileUpdate"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -5407,6 +6126,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_plugins_runs__run_id__plugins_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunPluginAnalysisResponse"];
                 };
             };
             /** @description Validation Error */
@@ -8033,6 +8785,37 @@ export interface operations {
             };
         };
     };
+    production_plugins_api_v1_admin_plugins_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductionPluginsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     operator_slo_api_v1_operator_slo_get: {
         parameters: {
             query?: never;
@@ -10043,6 +10826,148 @@ export interface operations {
             };
         };
     };
+    portfolio_version_readiness_api_v1_service_catalog_versions__version_label__readiness_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path: {
+                version_label: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_portfolio_version_api_v1_service_catalog_versions__version_label__decision_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path: {
+                version_label: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OfferingVersionDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_portfolio_validation_evidence_api_v1_service_catalog_versions__version_label__evidence_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path: {
+                version_label: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PortfolioValidationEvidenceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_platform_readiness_evaluation_api_v1_admin_platform_readiness_evaluations_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformReadinessEvaluationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     client_operations_overview_api_v1_client_operations_overview_get: {
         parameters: {
             query?: never;
@@ -10206,6 +11131,39 @@ export interface operations {
             };
         };
     };
+    download_engagement_package_api_v1_engagements__engagement_id__package_download_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path: {
+                engagement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     generate_engagement_plan_api_v1_engagements__engagement_id__plans_generate_post: {
         parameters: {
             query?: never;
@@ -10318,6 +11276,152 @@ export interface operations {
             };
         };
     };
+    create_service_cycle_api_v1_engagements__engagement_id__cycles_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path: {
+                engagement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServiceCycleCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_service_acceptance_checks_api_v1_engagements__engagement_id__acceptance_checks_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path: {
+                engagement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_service_acceptance_evidence_api_v1_engagements__engagement_id__acceptance_checks__check_id__evidence_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path: {
+                engagement_id: string;
+                check_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptanceEvidenceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_service_acceptance_check_api_v1_engagements__engagement_id__acceptance_checks__check_id__decision_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path: {
+                engagement_id: string;
+                check_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptanceDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_service_work_items_api_v1_service_work_items_get: {
         parameters: {
             query?: never;
@@ -10386,6 +11490,181 @@ export interface operations {
             };
         };
     };
+    execute_service_work_item_api_v1_service_work_items__item_id__execute_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServiceExecutionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_service_executions_api_v1_service_executions_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_service_execution_api_v1_service_executions__execution_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_service_execution_api_v1_service_executions__execution_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServiceExecutionRetryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_service_execution_api_v1_service_executions__execution_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServiceExecutionCancelRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_service_deliverables_api_v1_service_deliverables_get: {
         parameters: {
             query?: never;
@@ -10418,6 +11697,39 @@ export interface operations {
         };
     };
     get_service_deliverable_api_v1_service_deliverables__deliverable_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Tenant-ID"?: string | null;
+            };
+            path: {
+                deliverable_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_service_deliverable_package_api_v1_service_deliverables__deliverable_id__package_download_get: {
         parameters: {
             query?: never;
             header?: {

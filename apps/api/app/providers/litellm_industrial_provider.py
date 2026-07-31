@@ -123,6 +123,7 @@ class LiteLLMIndustrialAgentProvider(ProductionPipelineProvider):
         context_manifest: Optional[Dict[str, Any]] = None,
     ) -> WorkflowRun:
         self.ensure_workflows(db, tenant_id=tenant_id)
+        settings = get_settings()
         project = db.query(Project).filter_by(id=project_id, tenant_id=tenant_id).first()
         if not project:
             raise DomainError(404, "PROJECT_NOT_FOUND", "AI-native run requires an existing tenant project")
@@ -141,11 +142,11 @@ class LiteLLMIndustrialAgentProvider(ProductionPipelineProvider):
             trace_id=str(uuid.uuid4()),
             context_manifest_json={
                 **(context_manifest or {}),
-                "workflow_version": "2.13.0",
-                "context_policy_version": "2.13.0",
-                "cost_policy_version": "2.13.0",
+                "workflow_version": settings.ai_native_policy_version,
+                "context_policy_version": settings.ai_native_policy_version,
+                "cost_policy_version": settings.ai_native_policy_version,
             },
-            ai_budget_usd=get_settings().model_run_budget_usd,
+            ai_budget_usd=settings.model_run_budget_usd,
             ai_cost_usd=0.0,
             cost_estimate=0.0,
         )

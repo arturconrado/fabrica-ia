@@ -1,6 +1,13 @@
+from dataclasses import dataclass
 from typing import Any, Dict
 
-from app.service_delivery.contracts import CalculationResult
+
+@dataclass(frozen=True)
+class CalculationResult:
+    formula_code: str
+    formula_version: str
+    value: float
+    explanation: Dict[str, Any]
 
 
 PROJECT_HEALTH_WEIGHTS = {

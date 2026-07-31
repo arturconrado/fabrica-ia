@@ -9,12 +9,14 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy import text
 
 from app.core.config import get_settings
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, engine
 from app.providers.object_storage import object_storage
 
 router = APIRouter()
 _started_at = time.time()
 _request_counts = {"2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0}
+_requests_in_flight = 0
+_requests_in_flight_peak = 0
 _request_lock = threading.Lock()
 
 
@@ -104,6 +106,19 @@ def observe_request(status_code: int) -> None:
         _request_counts[status_class] = _request_counts.get(status_class, 0) + 1
 
 
+def observe_request_start() -> None:
+    global _requests_in_flight, _requests_in_flight_peak
+    with _request_lock:
+        _requests_in_flight += 1
+        _requests_in_flight_peak = max(_requests_in_flight_peak, _requests_in_flight)
+
+
+def observe_request_end() -> None:
+    global _requests_in_flight
+    with _request_lock:
+        _requests_in_flight = max(0, _requests_in_flight - 1)
+
+
 @router.get("/live")
 def live():
     return {"status": "ok", "service": "agentic-software-factory-api"}
@@ -158,6 +173,8 @@ def operational_status():
 def metrics():
     with _request_lock:
         counts = dict(_request_counts)
+        requests_in_flight = _requests_in_flight
+        requests_in_flight_peak = _requests_in_flight_peak
     lines = [
         "# HELP asf_process_uptime_seconds API process uptime.",
         "# TYPE asf_process_uptime_seconds gauge",
@@ -167,6 +184,36 @@ def metrics():
     ]
     for status_class, value in sorted(counts.items()):
         lines.append(f'asf_http_requests_total{{status_class="{status_class}"}} {value}')
+    lines.extend([
+        "# HELP asf_http_requests_in_flight Requests currently being processed by this API worker.",
+        "# TYPE asf_http_requests_in_flight gauge",
+        f"asf_http_requests_in_flight {requests_in_flight}",
+        "# HELP asf_http_requests_in_flight_peak Highest in-flight request count seen by this API worker.",
+        "# TYPE asf_http_requests_in_flight_peak gauge",
+        f"asf_http_requests_in_flight_peak {requests_in_flight_peak}",
+        "# HELP asf_api_threadpool_tokens Sync worker tokens configured per API process.",
+        "# TYPE asf_api_threadpool_tokens gauge",
+        f"asf_api_threadpool_tokens {get_settings().api_threadpool_tokens}",
+    ])
+    pool = engine.pool
+    checked_out = int(pool.checkedout()) if hasattr(pool, "checkedout") else 0
+    checked_in = int(pool.checkedin()) if hasattr(pool, "checkedin") else 0
+    overflow = max(0, int(pool.overflow())) if hasattr(pool, "overflow") else 0
+    configured_capacity = get_settings().db_pool_size + get_settings().db_max_overflow
+    utilization = checked_out / configured_capacity if configured_capacity else 0.0
+    lines.extend([
+        "# HELP asf_db_pool_connections Per-process SQLAlchemy connection-pool state.",
+        "# TYPE asf_db_pool_connections gauge",
+        f'asf_db_pool_connections{{state="checked_out"}} {checked_out}',
+        f'asf_db_pool_connections{{state="checked_in"}} {checked_in}',
+        f'asf_db_pool_connections{{state="overflow"}} {overflow}',
+        "# HELP asf_db_pool_utilization_ratio Per-process checked-out connections divided by configured pool plus overflow.",
+        "# TYPE asf_db_pool_utilization_ratio gauge",
+        f"asf_db_pool_utilization_ratio {utilization:.6f}",
+        "# HELP asf_db_pool_timeout_seconds Configured SQLAlchemy pool acquisition timeout.",
+        "# TYPE asf_db_pool_timeout_seconds gauge",
+        f"asf_db_pool_timeout_seconds {get_settings().db_pool_timeout_seconds}",
+    ])
     db = SessionLocal()
     try:
         slot_count = int(db.execute(text("SELECT COUNT(*) FROM workflow_slots")).scalar_one())

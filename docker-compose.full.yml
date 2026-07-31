@@ -78,8 +78,6 @@ services:
     volumes:
       - ${ASF_DOCKER_KUBECONFIG:-./data/kube/asf-local-internal.kubeconfig}:/kube/config:ro
     depends_on:
-      redis:
-        condition: service_healthy
       temporal:
         condition: service_started
       minio-init:

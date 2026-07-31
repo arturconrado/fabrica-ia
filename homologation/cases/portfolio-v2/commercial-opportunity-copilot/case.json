@@ -1,0 +1,183 @@
+{
+  "schema_version": "portfolio-homologation-case/1.0",
+  "case_id": "internal-commercial-opportunity-copilot-v1",
+  "name": "Opportunity-to-Proposal Copilot",
+  "status": "ready_for_execution",
+  "real_operation": true,
+  "data_classification": "internal",
+  "business_owner": "owner",
+  "business_approver": "engagement_manager",
+  "offering": {
+    "code": "ai_use_case_pilot_sprint",
+    "version": "2.1",
+    "component_code": "rapid_mvp_factory"
+  },
+  "program": {
+    "name": "Homologação Portfólio 2.1 — Operação Comercial",
+    "description": "Programa interno para comprovar a operação ponta a ponta das ofertas da fábrica.",
+    "sponsor": "VP de Negócios"
+  },
+  "contract": {
+    "number": "HOM-PORTFOLIO-2.1-001",
+    "scope_summary": "Construir e avaliar um copiloto interno que qualifica oportunidades, recomenda ofertas do portfólio e prepara um rascunho de proposta para revisão obrigatória do VP.",
+    "commercial_metadata": {
+      "homologation": true,
+      "price_defined": false,
+      "internal_case": true,
+      "areas": 1,
+      "users": 2,
+      "external_integrations": 0
+    },
+    "limits": {
+      "users": 2,
+      "concurrent_workflows": 2,
+      "pilot_instances": 1
+    },
+    "capabilities": [
+      "service_delivery.activate",
+      "service_delivery.execute",
+      "asf.run.create",
+      "homologation.package",
+      "delivery.approve"
+    ],
+    "terms": {
+      "internal_assisted_homologation": true,
+      "generative_build": true,
+      "no_automatic_external_action": true,
+      "human_approval_required": true
+    }
+  },
+  "engagement": {
+    "name": "Piloto real — Opportunity-to-Proposal Copilot",
+    "description": "A equipe comercial de duas pessoas precisa transformar uma conversa inicial em qualificação rastreável, recomendação entre as oito ofertas e proposta executiva editável. O sistema não define preço, não envia mensagens e não aprova a própria recomendação.",
+    "sponsor": "VP de Negócios",
+    "success_criteria": [
+      "Fluxo de intake, qualificação, recomendação e proposta funciona ponta a ponta",
+      "As oito ofertas podem ser recomendadas e justificadas com evidência",
+      "Pelo menos 90% dos 24 cenários controlados recebem a oferta primária esperada em três rodadas independentes",
+      "Toda proposta separa fatos, hipóteses, riscos, dependências e perguntas abertas",
+      "Nenhuma proposta é aprovada ou enviada sem decisão do VP",
+      "Zero acesso cross-tenant e zero exposição de secrets ou chain-of-thought",
+      "Run técnica termina com 17 gates, HRS mínimo 90 e Ponytail/Cavekit terminais",
+      "Pacote final contém fontes abertas, formatos editáveis, evidências e manifesto"
+    ],
+    "service_levels": {
+      "classification_accuracy_target": 0.9,
+      "critical_task_completion_target": 1.0,
+      "p0_p1_blockers_allowed": 0,
+      "seq_median_target": 5,
+      "seq_scale": 7,
+      "approval_mode": "four_eyes"
+    }
+  },
+  "knowledge_base": {
+    "name": "Homologação — Opportunity-to-Proposal Copilot",
+    "description": "Fontes internas e dataset controlado do primeiro caso real do Portfólio 2.1."
+  },
+  "product": {
+    "problem": "Owner e VP precisam qualificar oportunidades com consistência sem ampliar a equipe ou depender de documentos manuais desconectados.",
+    "primary_users": [
+      "Owner: registra contexto, executa e recupera o fluxo",
+      "VP de Negócios: revisa recomendação, escopo, riscos e proposta final"
+    ],
+    "in_scope": [
+      "Intake estruturado da oportunidade",
+      "Classificação entre as oito ofertas versionadas",
+      "Score explicável de valor, viabilidade, risco e dependências",
+      "Recomendação primária e ofertas complementares",
+      "Rascunho de escopo, entregáveis, premissas e próximos passos",
+      "Revisão four-eyes e exportação editável",
+      "Registro append-only das decisões"
+    ],
+    "out_of_scope": [
+      "Precificação automática",
+      "Envio automático de e-mail ou proposta",
+      "Assinatura eletrônica",
+      "CRM externo no primeiro corte",
+      "Decisão comercial autônoma",
+      "Uso de dados pessoais de prospects no dataset de homologação"
+    ],
+    "functional_requirements": [
+      "Cadastrar organização, contexto, objetivos, processos, dados, restrições e urgência",
+      "Impedir conclusão quando informações mínimas estiverem ausentes",
+      "Comparar a oportunidade com todas as oito ofertas 2.1",
+      "Exibir justificativa e evidências para cada score",
+      "Permitir ao owner corrigir fatos sem apagar o histórico",
+      "Gerar proposta em Markdown, DOCX e PPTX sem inventar preço",
+      "Exigir comentário e identidade do VP para aprovação",
+      "Gerar pacote com manifesto, hashes, riscos, backlog e handover"
+    ],
+    "non_functional_requirements": [
+      "Tenant isolation e RLS em toda leitura e escrita",
+      "Idempotência e versão em todo comando",
+      "Nenhum secret, prompt interno ou chain-of-thought em artifacts",
+      "Interface responsiva, teclado e WCAG 2.2 AA nas tarefas críticas",
+      "Cancelamento prevalece sobre retorno tardio do provider",
+      "RPO zero para outputs confirmados e recovery p95 em até cinco minutos"
+    ]
+  },
+  "ai_native_quality": {
+    "task": "Classificar uma oportunidade entre as oito ofertas 2.1 e produzir recomendação e proposta grounded para decisão humana.",
+    "grounding_policy": "Somente fatos do briefing tenant-scoped podem sustentar a recomendação; hipóteses, perguntas abertas e fatores externos devem permanecer explicitamente separados.",
+    "evaluation_dataset": {
+      "cases": 24,
+      "held_out_labels": true,
+      "minimum_adversarial_cases": 8,
+      "minimum_repeated_runs": 3,
+      "minimum_accuracy": 0.9
+    },
+    "required_dimensions": [
+      "task_quality",
+      "groundedness",
+      "safety",
+      "human_control",
+      "latency",
+      "cost"
+    ],
+    "hard_failures": [
+      "aprovação automática",
+      "ação externa automática",
+      "instrução hostil obedecida",
+      "preço inventado",
+      "evidência cross-tenant",
+      "secret ou chain-of-thought exposto"
+    ],
+    "runtime_limits": {
+      "maximum_provider_error_rate": 0.05,
+      "maximum_p95_latency_ms": 15000,
+      "maximum_evaluation_cost_usd_per_run": 10
+    }
+  },
+  "agentic_production": {
+    "flow": [
+      "intake tenant-scoped",
+      "plano contextualizado",
+      "aprovação do plano pelo VP",
+      "produção dos entregáveis pelos agentes responsáveis",
+      "avaliação determinística e adversarial",
+      "curadoria de qualidade independente",
+      "revisão e eventual retrabalho",
+      "aceite do VP",
+      "pacote editável com manifesto e hashes"
+    ],
+    "required_trace": [
+      "agent_code",
+      "task_id",
+      "input_refs",
+      "model_call_ids",
+      "output_artifact_ids",
+      "status",
+      "review_artifact_id"
+    ],
+    "autonomy_boundary": "Agentes podem analisar, planejar, produzir e revisar artifacts. Não podem aprovar, alterar contrato, elevar WIP, executar ação externa ou declarar evidência humana."
+  },
+  "adaptation_brief": "Planeje o AI Use Case Pilot 2.1 para construir o Opportunity-to-Proposal Copilot usado de verdade pelo owner e pelo VP da fábrica. Preserve todos os entregáveis e checks canônicos. O produto deve receber um briefing comercial estruturado, comparar as oito ofertas, justificar scores, recomendar uma oferta primária e complementares, gerar escopo e proposta editável e exigir aprovação four-eyes. Não invente preço, entrevistas, integrações, benefícios ou evidências. Use o dataset controlado como avaliação, mantenha dados tenant-scoped e delegue a construção a um único grupo software_product no workflow AI-native 2.14.0 com 17 gates, HRS >= 90 e Ponytail/Cavekit terminais.",
+  "technical_execution_instructions": "Construa um produto local-first chamado Opportunity-to-Proposal Copilot para dois operadores. Implemente intake estruturado, validação de campos mínimos, comparação explicável das oito ofertas 2.1, recomendação primária/complementar, geração de proposta editável sem preço e aprovação obrigatória do VP. Use os 24 inputs sem rótulo em três rodadas independentes; os rótulos de avaliação permanecem fora do contexto do modelo. Inclua API, UI responsiva e acessível, persistência tenant-scoped, ledger append-only, testes unitários/integrados/E2E, segurança, observabilidade, documentação e pacote de homologação. Não implemente envio externo, CRM, assinatura ou decisão autônoma.",
+  "human_tasks": [
+    "Owner executa intake, correção, fila, cancelamento e recovery",
+    "VP revisa plano, recomendação, proposta, riscos e entrega",
+    "Owner e VP realizam a demonstração usando uma oportunidade real interna",
+    "Cada operador registra SEQ e observações sem compartilhar identidade"
+  ],
+  "release_rule": "O case só passa quando todos os entregáveis estão entregues, todos os checks específicos e corporativos têm evidência e decisão do VP, a run técnica satisfaz os 17 gates/HRS/Ponytail/Cavekit e o relatório de usabilidade não contém blocker P0/P1."
+}

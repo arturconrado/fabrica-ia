@@ -46,14 +46,15 @@ export default function RunPage() {
   const { data, loading, error, reload } = useRunData(runId);
   const [selectedNode, setSelectedNode] = useState<Dict | null>(null);
   const [tab, setTab] = useState("build");
-  useRunStream(runId, reload);
+  const streamStatus = useRunStream(runId, reload);
 
   if (loading) return <LoadingState label="Sincronizando cockpit com o workflow…" />;
-  if (error) return <ErrorState message={error} />;
-  if (!data.run) return <ErrorState message="Execução não encontrada neste tenant." />;
+  if (error) return <ErrorState message={error} onRetry={() => void reload()} />;
+  if (!data.run) return <ErrorState message="Execução não encontrada neste tenant." onRetry={() => void reload()} />;
 
   return (
     <div className="space-y-4">
+      {streamStatus === "paused" ? <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100" role="status">Atualizações pausadas. <button type="button" className="ml-2 min-h-11 font-semibold underline" onClick={() => void reload()}>Atualizar agora</button></div> : null}
       <RunHeader run={data.run} onReload={() => void reload()} />
       <div className="flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Áreas da missão">
         {tabs.map((item) => (

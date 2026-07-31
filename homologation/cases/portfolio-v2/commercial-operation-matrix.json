@@ -1,0 +1,95 @@
+{
+  "schema_version": "commercial-operation-matrix/1.0",
+  "purpose": "Provar que a fábrica opera serviços consultivos e produtos técnicos de IA de forma independente ou concorrente.",
+  "cases": [
+    {
+      "id": "standalone-discovery-atlaslog",
+      "tenant_id": "atlaslog-homologation",
+      "customer": "AtlasLog",
+      "offering_code": "ai_value_discovery",
+      "offering_version": "2.1",
+      "standalone": true,
+      "dependency_case_ids": [],
+      "commercial_goal": "Mapear maturidade, processos e casos de IA e entregar ranking, business cases e roadmap para decisão do sponsor.",
+      "ai_solution": {
+        "use_case": "Análise agentic de oportunidades de IA em atendimento, roteirização e manutenção.",
+        "human_decision": "VP aprova o portfólio priorizado e o próximo investimento.",
+        "customer_data_boundary": "Somente fontes e entrevistas autorizadas do tenant AtlasLog."
+      },
+      "expected_process_modes": ["agent", "human"],
+      "code_delivery_required": false,
+      "required_delivery_families": [
+        "assessment",
+        "process_map",
+        "opportunity_inventory",
+        "business_case",
+        "reference_architecture",
+        "roadmap",
+        "executive_presentation"
+      ],
+      "terminal_evidence": [
+        "todos os entregáveis contratados",
+        "checks específicos e corporativos",
+        "pacotes editáveis",
+        "aprovação e entrega pelo VP"
+      ]
+    },
+    {
+      "id": "agentic-quotation-mvp-metalquote",
+      "tenant_id": "metalquote-homologation",
+      "customer": "MetalQuote",
+      "offering_code": "ai_use_case_pilot_sprint",
+      "offering_version": "2.1",
+      "standalone": true,
+      "dependency_case_ids": [],
+      "commercial_goal": "Construir um MVP de orçamentação agêntica B2B que transforma solicitação técnica em orçamento revisável, sem precificar, aprovar ou enviar autonomamente.",
+      "ai_solution": {
+        "use_case": "Agentes de intake, requisitos, evidência de fornecedor, composição de custos, risco e proposta colaboram em uma trilha auditável.",
+        "human_decision": "Especialista valida custos e premissas; VP aprova a proposta e a entrega do piloto.",
+        "customer_data_boundary": "Catálogo, regras comerciais e cotações permanecem no tenant MetalQuote."
+      },
+      "expected_process_modes": ["agent", "human", "integration", "technical_run"],
+      "code_delivery_required": true,
+      "required_delivery_families": [
+        "problem_definition",
+        "solution_architecture",
+        "evaluation_dataset",
+        "source_code",
+        "automated_tests",
+        "security_report",
+        "quality_report",
+        "product_backlog",
+        "homologation_package"
+      ],
+      "technical_acceptance": {
+        "quality_gates": 17,
+        "minimum_hrs": 90,
+        "ponytail_status": "terminal",
+        "cavekit_status": "terminal",
+        "file_change_diffs_required": true,
+        "editable_source_required": true,
+        "unit_integration_e2e_required": true,
+        "human_approval_required": true
+      },
+      "terminal_evidence": [
+        "código e diffs",
+        "dataset held-out e métricas",
+        "testes funcionais, grounding, segurança, custo e experiência",
+        "pacote versionado com hashes",
+        "decisão go/no-go do VP"
+      ]
+    }
+  ],
+  "concurrency": {
+    "cases_may_run_independently": true,
+    "parallel_wave": [
+      "standalone-discovery-atlaslog",
+      "agentic-quotation-mvp-metalquote"
+    ],
+    "global_service_wip": 5,
+    "per_tenant_service_wip": 2,
+    "global_ai_native_workflows": 10,
+    "per_tenant_ai_native_workflows": 2,
+    "cross_tenant_reuse": false
+  }
+}

@@ -90,6 +90,8 @@ main() {
   require_llm_upstream_env
   require_env ASF_LITELLM_API_KEY
   require_env ASF_ENCRYPTION_KEY
+  require_env ASF_LOCAL_RELEASE_CLIENT_SECRET
+  require_env ASF_LOCAL_EXECUTION_CLIENT_SECRET
 
   local cluster_name="${KIND_CLUSTER_NAME:-asf-local}"
   local context="kind-$cluster_name"
@@ -112,6 +114,10 @@ main() {
   export ASF_LITELLM_BASE_URL="${ASF_LITELLM_BASE_URL:-http://litellm:4000}"
   export ASF_DEFAULT_TENANT_ID="${ASF_FULL_TENANT_ID:-local-dev}"
   export ASF_DEFAULT_TENANT_NAME="${ASF_FULL_TENANT_NAME:-Local Development}"
+  export ASF_RELEASE_TENANT_ID="${ASF_RELEASE_TENANT_ID:-release-homologation}"
+  export ASF_RELEASE_TENANT_NAME="${ASF_RELEASE_TENANT_NAME:-Release Homologation}"
+  [ "$ASF_RELEASE_TENANT_ID" != "$ASF_DEFAULT_TENANT_ID" ] \
+    || die "ASF_RELEASE_TENANT_ID must be distinct from the default/customer tenant"
   export ASF_SANDBOX_RUNTIME_CLASS="${ASF_SANDBOX_RUNTIME_CLASS:-}"
 
   mkdir -p "$REPO_ROOT/data/api/workspaces" "$REPO_ROOT/data/kube"
@@ -187,34 +193,54 @@ main() {
   (cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
     /opt/keycloak/bin/kcadm.sh update "clients/$oidc_client_id" -r software-factory \
     -s standardFlowEnabled=true -s directAccessGrantsEnabled=false >/dev/null)
-  local validation_client_id
-  validation_client_id="$(cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
+  local release_client_id
+  release_client_id="$(cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
     /opt/keycloak/bin/kcadm.sh get clients -r software-factory \
-    -q clientId=software-factory-validation --fields id | \
+    -q clientId=software-factory-release --fields id | \
     python3 -c 'import json,sys; rows=json.load(sys.stdin); print(rows[0]["id"] if rows else "")')"
-  if [ -z "$validation_client_id" ]; then
-    printf '%s' '{"clientId":"software-factory-validation","name":"ASF Local Validation (test profile only)","enabled":true,"publicClient":false,"clientAuthenticatorType":"client-secret","secret":"local-validation-only-change-me","standardFlowEnabled":false,"directAccessGrantsEnabled":false,"serviceAccountsEnabled":true,"attributes":{"access.token.lifespan":"7200"},"protocolMappers":[{"name":"software-factory-web-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.client.audience":"software-factory-web","id.token.claim":"false","access.token.claim":"true","userinfo.token.claim":"false"}}]}' | \
+  if [ -z "$release_client_id" ]; then
+    printf '%s' '{"clientId":"software-factory-release","name":"ASF Release Homologation Service Account","enabled":true,"publicClient":false,"clientAuthenticatorType":"client-secret","standardFlowEnabled":false,"directAccessGrantsEnabled":false,"serviceAccountsEnabled":true,"attributes":{"access.token.lifespan":"7200"},"protocolMappers":[{"name":"software-factory-web-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.client.audience":"software-factory-web","id.token.claim":"false","access.token.claim":"true","userinfo.token.claim":"false"}}]}' | \
       (cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
         /opt/keycloak/bin/kcadm.sh create clients -r software-factory -f - >/dev/null)
-    validation_client_id="$(cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
+    release_client_id="$(cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
       /opt/keycloak/bin/kcadm.sh get clients -r software-factory \
-      -q clientId=software-factory-validation --fields id | \
+      -q clientId=software-factory-release --fields id | \
       python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')"
   fi
   (cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
-    /opt/keycloak/bin/kcadm.sh update "clients/$validation_client_id" -r software-factory \
+    /opt/keycloak/bin/kcadm.sh update "clients/$release_client_id" -r software-factory \
     -s enabled=true \
     -s publicClient=false \
     -s clientAuthenticatorType=client-secret \
-    -s secret="${ASF_LOCAL_VALIDATION_CLIENT_SECRET:-local-validation-only-change-me}" \
+    -s secret="$ASF_LOCAL_RELEASE_CLIENT_SECRET" \
     -s standardFlowEnabled=false \
     -s directAccessGrantsEnabled=false \
     -s serviceAccountsEnabled=true >/dev/null)
   (cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
-    /opt/keycloak/bin/kcadm.sh get "clients/$validation_client_id" -r software-factory) | \
+    /opt/keycloak/bin/kcadm.sh get "clients/$release_client_id" -r software-factory) | \
     python3 -c 'import json,sys; row=json.load(sys.stdin); row.setdefault("attributes", {})["access.token.lifespan"]="7200"; json.dump(row, sys.stdout)' | \
     (cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
-      /opt/keycloak/bin/kcadm.sh update "clients/$validation_client_id" -r software-factory -f - >/dev/null)
+      /opt/keycloak/bin/kcadm.sh update "clients/$release_client_id" -r software-factory -f - >/dev/null)
+
+  local execution_client_id
+  execution_client_id="$(cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
+    /opt/keycloak/bin/kcadm.sh get clients -r software-factory \
+    -q clientId=software-factory-release-execution --fields id | \
+    python3 -c 'import json,sys; rows=json.load(sys.stdin); print(rows[0]["id"] if rows else "")')"
+  if [ -z "$execution_client_id" ]; then
+    printf '%s' '{"clientId":"software-factory-release-execution","name":"ASF Ephemeral Release Execution Service","enabled":true,"publicClient":false,"clientAuthenticatorType":"client-secret","standardFlowEnabled":false,"directAccessGrantsEnabled":false,"serviceAccountsEnabled":true,"attributes":{"access.token.lifespan":"7200"},"protocolMappers":[{"name":"software-factory-web-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.client.audience":"software-factory-web","id.token.claim":"false","access.token.claim":"true","userinfo.token.claim":"false"}}]}' | \
+      (cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
+        /opt/keycloak/bin/kcadm.sh create clients -r software-factory -f - >/dev/null)
+    execution_client_id="$(cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
+      /opt/keycloak/bin/kcadm.sh get clients -r software-factory \
+      -q clientId=software-factory-release-execution --fields id | \
+      python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')"
+  fi
+  (cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
+    /opt/keycloak/bin/kcadm.sh update "clients/$execution_client_id" -r software-factory \
+    -s enabled=true -s publicClient=false -s clientAuthenticatorType=client-secret \
+    -s secret="$ASF_LOCAL_EXECUTION_CLIENT_SECRET" -s standardFlowEnabled=false \
+    -s directAccessGrantsEnabled=false -s serviceAccountsEnabled=true >/dev/null)
   wait_for_http "Keycloak OIDC discovery" "http://$service_host:8081/realms/software-factory/.well-known/openid-configuration"
   wait_for_http "MinIO" "http://$service_host:9000/minio/health/ready"
   wait_for_http "LiteLLM" "http://$service_host:4000/health/liveliness"
@@ -224,6 +250,10 @@ main() {
 
   log "Bootstrapping the assisted-pilot tenant and OIDC owner idempotently"
   local keycloak_user="${ASF_LOCAL_KEYCLOAK_USER:-operator@local.dev}"
+  local keycloak_password="${ASF_LOCAL_KEYCLOAK_PASSWORD:-ChangeMe123!}"
+  (cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
+    /opt/keycloak/bin/kcadm.sh set-password -r software-factory \
+    --username "$keycloak_user" --new-password "$keycloak_password" >/dev/null)
   owner_subject="$(cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
     /opt/keycloak/bin/kcadm.sh get users -r software-factory -q exact=true -q username="$keycloak_user" --fields id | \
     python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')"
@@ -238,10 +268,26 @@ main() {
     --email "$keycloak_user" \
     --name "Local Operator" \
     --confirm "bootstrap assisted pilot tenant")
-  local validation_subject
-  validation_subject="$(cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
-    /opt/keycloak/bin/kcadm.sh get "clients/$validation_client_id/service-account-user" -r software-factory --fields id | \
-    python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+  local vp_user="${ASF_LOCAL_VP_KEYCLOAK_USER:-vp@local.dev}"
+  local vp_password="${ASF_LOCAL_VP_KEYCLOAK_PASSWORD:-ChangeMeVp123!}"
+  local vp_subject
+  vp_subject="$(cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
+    /opt/keycloak/bin/kcadm.sh get users -r software-factory -q exact=true -q username="$vp_user" --fields id | \
+    python3 -c 'import json,sys; rows=json.load(sys.stdin); print(rows[0]["id"] if rows else "")')"
+  if [ -z "$vp_subject" ]; then
+    (cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
+      /opt/keycloak/bin/kcadm.sh create users -r software-factory \
+      -s username="$vp_user" -s email="$vp_user" -s firstName=Local \
+      -s lastName='Engagement Manager' -s enabled=true -s emailVerified=true \
+      -s "attributes.tenant_id=[\"$ASF_DEFAULT_TENANT_ID\"]" \
+      -s "attributes.tenant_name=[\"$ASF_DEFAULT_TENANT_NAME\"]" >/dev/null)
+    vp_subject="$(cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
+      /opt/keycloak/bin/kcadm.sh get users -r software-factory -q exact=true -q username="$vp_user" --fields id | \
+      python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')"
+  fi
+  (cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
+    /opt/keycloak/bin/kcadm.sh set-password -r software-factory \
+    --username "$vp_user" --new-password "$vp_password" >/dev/null)
   (cd "$REPO_ROOT" && docker compose --profile full exec -T \
     -e DATABASE_URL="postgresql+psycopg://factory:factory@postgres:5432/factory" \
     -e ASF_DATABASE_URL="postgresql+psycopg://factory:factory@postgres:5432/factory" \
@@ -249,9 +295,60 @@ main() {
     python -m app.cli.bootstrap_tenant \
     --tenant-id "$ASF_DEFAULT_TENANT_ID" \
     --tenant-name "$ASF_DEFAULT_TENANT_NAME" \
-    --subject "$validation_subject" \
-    --name "Local Validation Service" \
+    --subject "$vp_subject" \
+    --email "$vp_user" \
+    --name "Local Engagement Manager" \
+    --role engagement_manager \
     --confirm "bootstrap assisted pilot tenant")
+
+  log "Bootstrapping isolated release tenant memberships for the owner and VP"
+  (cd "$REPO_ROOT" && docker compose --profile full exec -T \
+    -e DATABASE_URL="postgresql+psycopg://factory:factory@postgres:5432/factory" \
+    -e ASF_DATABASE_URL="postgresql+psycopg://factory:factory@postgres:5432/factory" \
+    api python -m app.cli.bootstrap_tenant \
+    --tenant-id "$ASF_RELEASE_TENANT_ID" --tenant-name "$ASF_RELEASE_TENANT_NAME" \
+    --tenant-purpose release_homologation --subject "$owner_subject" \
+    --email "$keycloak_user" --name "Release Owner" \
+    --confirm "bootstrap release homologation tenant")
+  (cd "$REPO_ROOT" && docker compose --profile full exec -T \
+    -e DATABASE_URL="postgresql+psycopg://factory:factory@postgres:5432/factory" \
+    -e ASF_DATABASE_URL="postgresql+psycopg://factory:factory@postgres:5432/factory" \
+    api python -m app.cli.bootstrap_tenant \
+    --tenant-id "$ASF_RELEASE_TENANT_ID" --tenant-name "$ASF_RELEASE_TENANT_NAME" \
+    --tenant-purpose release_homologation --subject "$vp_subject" \
+    --email "$vp_user" --name "Release Engagement Manager" --role engagement_manager \
+    --confirm "bootstrap release homologation tenant")
+
+  local release_subject
+  release_subject="$(cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
+    /opt/keycloak/bin/kcadm.sh get "clients/$release_client_id/service-account-user" -r software-factory --fields id | \
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+  (cd "$REPO_ROOT" && docker compose --profile full exec -T \
+    -e DATABASE_URL="postgresql+psycopg://factory:factory@postgres:5432/factory" \
+    -e ASF_DATABASE_URL="postgresql+psycopg://factory:factory@postgres:5432/factory" \
+    api \
+    python -m app.cli.bootstrap_tenant \
+    --tenant-id "$ASF_RELEASE_TENANT_ID" \
+    --tenant-name "$ASF_RELEASE_TENANT_NAME" \
+    --tenant-purpose release_homologation \
+    --subject "$release_subject" \
+    --name "Release Validation Service Account" \
+    --role release_validator \
+    --seed-release-assets \
+    --confirm "bootstrap release homologation tenant")
+
+  local execution_subject
+  execution_subject="$(cd "$REPO_ROOT" && docker compose --profile full exec -T keycloak \
+    /opt/keycloak/bin/kcadm.sh get "clients/$execution_client_id/service-account-user" -r software-factory --fields id | \
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+  (cd "$REPO_ROOT" && docker compose --profile full exec -T \
+    -e DATABASE_URL="postgresql+psycopg://factory:factory@postgres:5432/factory" \
+    -e ASF_DATABASE_URL="postgresql+psycopg://factory:factory@postgres:5432/factory" \
+    api python -m app.cli.bootstrap_tenant \
+    --tenant-id "$ASF_RELEASE_TENANT_ID" --tenant-name "$ASF_RELEASE_TENANT_NAME" \
+    --tenant-purpose release_homologation --subject "$execution_subject" \
+    --name "Ephemeral Release Execution Service" --role operator \
+    --confirm "bootstrap release homologation tenant")
 
   log "Stack ready. Run: make docker-full-validate"
 }

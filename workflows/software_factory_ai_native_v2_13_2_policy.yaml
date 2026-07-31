@@ -1,0 +1,59 @@
+version: 2.13.2
+extends: software_factory_ai_native_v2_13_1_policy.yaml
+description: AI-native factory with mandatory pinned Ponytail and Cavekit production protocols, compact unit context and audited plugin coverage.
+plugins:
+  mandatory: true
+  fail_closed: true
+  automatic_updates: false
+  ponytail:
+    version: 4.8.4
+    source_revision: 16f29800fd2681bdf24f3eb4ccffe38be3baec6b
+  cavekit:
+    version: 4.1.0
+    source_revision: c322f0bb6db82163041930467f3ce32754d42827
+node_defaults:
+  ponytail_enabled: true
+  ponytail_mode: full
+  ponytail_commands: [activate, instructions]
+  cavekit_stages: [caveman]
+nodes:
+  Demand Classifier:
+    ponytail_commands: [activate, instructions, help]
+    cavekit_stages: [grill, caveman]
+  Acceptance Criteria Architect:
+    cavekit_stages: [spec, caveman]
+  Scope Governor:
+    cavekit_stages: [grill, spec, caveman]
+  Product Manager:
+    cavekit_stages: [spec, research, caveman]
+  UX UI Designer:
+    cavekit_stages: [research, build, caveman]
+  Architect:
+    cavekit_stages: [spec, research, review, caveman]
+  Data Architect:
+    cavekit_stages: [research, review, caveman]
+  API Contract Engineer:
+    cavekit_stages: [research, review, caveman]
+  Project Manager:
+    cavekit_stages: [spec, review, caveman]
+  Engineer:
+    ponytail_commands: [activate, instructions, debt]
+    cavekit_stages: [build, caveman]
+  Code Reviewer:
+    ponytail_commands: [activate, instructions, review, audit]
+    cavekit_stages: [review, check, caveman]
+  QA Engineer:
+    cavekit_stages: [check, backprop, caveman]
+  Visual QA Agent:
+    cavekit_stages: [review, check, caveman]
+  Accessibility QA Agent:
+    cavekit_stages: [review, check, caveman]
+  Security Engineer:
+    cavekit_stages: [research, review, check, caveman]
+  DevOps Engineer:
+    cavekit_stages: [build, check, caveman]
+  Release Manager:
+    cavekit_stages: [check, caveman]
+  Quality Governor:
+    ponytail_commands: [activate, instructions, gain, help]
+    cavekit_stages: [check, deepen, caveman]

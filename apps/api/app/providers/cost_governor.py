@@ -160,7 +160,19 @@ def invocation_spend(db: Session, *, tenant_id: str, invocation_id: str) -> floa
 
 def classify_retry(error: Exception | str) -> str:
     text = str(error).casefold()
-    if any(term in text for term in ("budget", "tenant isolation", "cross-tenant", "forbidden", "permission")):
+    if any(
+        term in text
+        for term in (
+            "budget",
+            "tenant isolation",
+            "cross-tenant",
+            "forbidden",
+            "permission",
+            "402",
+            "payment required",
+            "insufficient credit",
+        )
+    ):
         return "budget_or_isolation"
     if any(term in text for term in ("json", "schema", "parse", "validation", "non-object response")):
         return "schema_repair"

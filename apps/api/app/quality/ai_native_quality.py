@@ -11,6 +11,7 @@ from app.models import (
     FileChange,
     HomologationPackage,
     HomologationReport,
+    PluginInvocation,
     QualityGate,
     QualityScore,
     Requirement,
@@ -64,6 +65,55 @@ class AINativeQualityEvaluator:
         )
         test_reports = db.query(TestReport).filter_by(tenant_id=run.tenant_id, run_id=run.id).all()
         steps = db.query(AgentStepExecution).filter_by(tenant_id=run.tenant_id, run_id=run.id).all()
+        plugin_rows = db.query(PluginInvocation).filter_by(tenant_id=run.tenant_id, run_id=run.id).all()
+        workflow_version = str((run.context_manifest_json or {}).get("workflow_version") or "")
+        plugin_required = workflow_version in {"2.13.2", "2.14.0"}
+        candidate_paths = {change.file_path: change for change in files}
+        qa_authored_tests = any(
+            change.node_id == "QA Engineer"
+            and (
+                change.file_path.startswith("generated_app/backend/tests/")
+                or change.file_path.startswith("generated_app/e2e/")
+                or ".test." in change.file_path
+                or ".spec." in change.file_path
+            )
+            for change in files
+        )
+        devops_docker = any(
+            change.node_id == "DevOps Engineer" and "Dockerfile" in change.file_path
+            for change in files
+        )
+        devops_compose = any(
+            change.node_id == "DevOps Engineer"
+            and change.file_path.rsplit("/", 1)[-1].startswith("docker-compose")
+            for change in files
+        )
+        candidate_source_complete = (
+            "generated_app/backend/app/main.py" in candidate_paths
+            and "generated_app/frontend/app/page.tsx" in candidate_paths
+            and "generated_app/frontend/package.json" in candidate_paths
+            and "generated_app/README.md" in candidate_paths
+            and qa_authored_tests
+            and devops_docker
+            and devops_compose
+        )
+        required_plugin_commands = {
+            "ponytail": {"activate", "instructions", "review", "audit", "debt", "gain", "help"},
+            "cavekit": {"grill", "spec", "research", "review", "build", "check", "backprop", "deepen", "caveman"},
+        }
+        plugin_coverage = all(
+            commands.issubset(
+                {
+                    row.command
+                    for row in plugin_rows
+                    if row.plugin_name == name and row.status in {"completed", "not_applicable"}
+                }
+            )
+            for name, commands in required_plugin_commands.items()
+        ) and all(row.status != "failed" for row in plugin_rows)
+        traceability_verified = self._verified_contract_traceability(db, run) if plugin_required else (
+            db.query(RequirementTrace).filter_by(tenant_id=run.tenant_id, run_id=run.id).count() > 0
+        )
 
         evidence = {
             "requirements": db.query(Requirement).filter_by(tenant_id=run.tenant_id, run_id=run.id).count() > 0,
@@ -73,10 +123,13 @@ class AINativeQualityEvaluator:
             "ux": "UX_SPEC.md" in artifacts,
             "data": "DATA_MODEL.md" in artifacts,
             "api": "API_SPEC.md" in artifacts,
-            "implementation": bool(files),
-            "code_review": any(step.node_id == "Code Reviewer" and step.decision == "approved" and step.status == "completed" for step in steps),
+            "implementation": candidate_source_complete if workflow_version == "2.14.0" else bool(files),
+            "code_review": (
+                any(step.node_id == "Code Reviewer" and step.decision == "approved" and step.status == "completed" for step in steps)
+                and (not plugin_required or (plugin_coverage and "PONYTAIL_AUDIT.md" in artifacts and "PONYTAIL_DEBT.md" in artifacts))
+            ),
             "tests": self._profiles_passed(test_reports, self.REQUIRED_TEST_COMMAND_MARKERS["tests"]),
-            "traceability": db.query(RequirementTrace).filter_by(tenant_id=run.tenant_id, run_id=run.id).count() > 0,
+            "traceability": traceability_verified,
             "visual_qa": self._profiles_passed(test_reports, self.REQUIRED_TEST_COMMAND_MARKERS["visual_qa"]),
             "accessibility": self._profiles_passed(test_reports, self.REQUIRED_TEST_COMMAND_MARKERS["accessibility"]),
             "security": self._profiles_passed(test_reports, self.REQUIRED_TEST_COMMAND_MARKERS["security"]),
@@ -177,6 +230,59 @@ class AINativeQualityEvaluator:
             payload={"score": score, "status": status, "blockers": blockers},
         )
         return score, blockers
+
+    @staticmethod
+    def _verified_contract_traceability(db: Session, run: WorkflowRun) -> bool:
+        requirement_ids = {
+            row.requirement_id
+            for row in db.query(Requirement)
+            .filter_by(tenant_id=run.tenant_id, run_id=run.id, priority="P0")
+            .all()
+        }
+        if not requirement_ids:
+            return False
+        traces = (
+            db.query(RequirementTrace)
+            .filter_by(
+                tenant_id=run.tenant_id,
+                run_id=run.id,
+                provenance="verified_contract",
+                status="pass",
+            )
+            .all()
+        )
+        reports = {
+            report.id: report
+            for report in db.query(TestReport).filter_by(tenant_id=run.tenant_id, run_id=run.id).all()
+        }
+        files = {
+            change.file_path: change
+            for change in db.query(FileChange)
+            .filter_by(tenant_id=run.tenant_id, run_id=run.id)
+            .order_by(FileChange.created_at.asc())
+            .all()
+        }
+        valid_requirements: set[str] = set()
+        for trace in traces:
+            report = reports.get(str(trace.test_report_id or ""))
+            change = files.get(trace.file_path)
+            required_refs = {
+                trace.requirement_id,
+                trace.test_name,
+                *(trace.criterion_ids_json or []),
+                *(trace.invariant_ids_json or []),
+            }
+            if (
+                report
+                and report.status == "passed"
+                and change
+                and trace.test_name
+                and trace.criterion_ids_json
+                and trace.invariant_ids_json
+                and required_refs.issubset(set(change.spec_refs_json or []))
+            ):
+                valid_requirements.add(trace.requirement_id)
+        return requirement_ids.issubset(valid_requirements)
 
     @staticmethod
     def _profiles_passed(reports: list[TestReport], markers: list[str]) -> bool:

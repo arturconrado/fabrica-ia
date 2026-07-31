@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { API_BASE } from "@/lib/api";
 import type { Dict } from "@/lib/types";
 
 export function useRunStream(runId: string, onEvent: (event?: Dict) => void) {
+  const [status, setStatus] = useState<"connecting" | "connected" | "paused">("connecting");
+
   useEffect(() => {
     const controller = new AbortController();
+    setStatus("connecting");
 
     async function connect() {
       try {
@@ -14,13 +17,20 @@ export function useRunStream(runId: string, onEvent: (event?: Dict) => void) {
           credentials: "same-origin",
           signal: controller.signal
         });
-        if (!response.ok || !response.body) return;
+        if (!response.ok || !response.body) {
+          setStatus("paused");
+          return;
+        }
+        setStatus("connected");
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let pending = "";
         while (!controller.signal.aborted) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            if (!controller.signal.aborted) setStatus("paused");
+            break;
+          }
           pending += decoder.decode(value, { stream: true });
           const frames = pending.split("\n\n");
           pending = frames.pop() || "";
@@ -32,11 +42,13 @@ export function useRunStream(runId: string, onEvent: (event?: Dict) => void) {
           }
         }
       } catch {
-        // The operator can reconnect by reloading; no polling fabricates a second source of truth.
+        if (!controller.signal.aborted) setStatus("paused");
       }
     }
 
     void connect();
     return () => controller.abort();
   }, [runId, onEvent]);
+
+  return status;
 }

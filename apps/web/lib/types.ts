@@ -242,6 +242,11 @@ export type ExecutionUnitSummary = {
   model_call_id?: string | null;
   output_hash?: string | null;
   finish_reason?: string | null;
+  context_hash?: string | null;
+  estimated_input_tokens?: number | null;
+  source_input_tokens?: number | null;
+  saved_input_tokens?: number | null;
+  optimization_policy_version?: string | null;
   last_heartbeat_at?: string | null;
   targets_json?: string[];
   dependencies_json?: string[];

@@ -87,6 +87,11 @@ class SegmentedExecutionService:
             order_index=descriptor.order,
             dependencies_json=list(descriptor.dependencies),
             targets_json=list(descriptor.targets),
+            context_manifest_json={
+                "requirement_refs": list(descriptor.requirement_refs),
+                "invariant_refs": list(descriptor.invariant_refs),
+                "verification_tests": list(descriptor.verification_tests),
+            },
             input_budget_tokens=descriptor.input_budget_tokens,
             output_budget_tokens=descriptor.output_budget_tokens,
             input_hash=descriptor_hash,

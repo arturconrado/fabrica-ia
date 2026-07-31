@@ -1,17 +1,21 @@
 import json
+import itertools
 import logging
 import time
 import uuid
 
+import anyio.to_thread
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
+from sqlalchemy import text
 
 from app.api.routes_auth import router as auth_router
 from app.api.routes_batches import router as batches_router
 from app.api.routes_feedback import router as feedback_router
 from app.api.routes_health import router as health_router
-from app.api.routes_health import observe_request
+from app.api.routes_health import observe_request, observe_request_end, observe_request_start
 from app.api.routes_learning import router as learning_router
 from app.api.routes_knowledge import router as knowledge_router
 from app.api.routes_gamification import router as gamification_router
@@ -27,7 +31,7 @@ from app.api.routes_service_delivery_os import router as service_delivery_os_rou
 from app.api.routes_workflows import router as workflows_router
 from app.core.config import get_settings, validate_production_runtime
 from app.db.init_db import init_db
-from app.db.session import SessionLocal, set_tenant_context
+from app.db.session import SessionLocal, engine, set_tenant_context
 from app.service_delivery.ai_prompts import ensure_prompt_versions
 from app.service_delivery.service import ensure_component_definitions
 from app.service_delivery.catalog import ensure_service_catalog
@@ -39,6 +43,13 @@ from app.services.run_service import provider
 
 app = FastAPI(title="Agentic Software Factory API", version="0.1.0")
 logger = logging.getLogger("asf.requests")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _request_handler = logging.StreamHandler()
+    _request_handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(_request_handler)
+logger.propagate = False
+_successful_read_counter = itertools.count()
 
 settings = get_settings()
 app.add_middleware(
@@ -48,6 +59,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=5)
 
 
 def _audit_access_denial(request: Request, detail) -> None:
@@ -101,37 +113,52 @@ def http_error_handler(request: Request, exc: HTTPException):
 async def operational_request_log(request, call_next):
     started = time.perf_counter()
     correlation_id = request.headers.get("X-Correlation-ID") or request.headers.get("X-Request-ID") or ""
+    observe_request_start()
     try:
-        response = await call_next(request)
-    except Exception:
-        observe_request(500)
-        logger.exception(
-            json.dumps(
-                {
-                    "event": "http.request_failed",
-                    "method": request.method,
-                    "path": request.url.path,
-                    "tenant_id": getattr(request.state, "tenant_id", request.headers.get("X-Tenant-ID") or "unknown"),
-                    "correlation_id": correlation_id,
-                }
+        try:
+            response = await call_next(request)
+        except Exception:
+            observe_request(500)
+            logger.exception(
+                json.dumps(
+                    {
+                        "event": "http.request_failed",
+                        "method": request.method,
+                        "path": request.url.path,
+                        "tenant_id": getattr(request.state, "tenant_id", request.headers.get("X-Tenant-ID") or "unknown"),
+                        "correlation_id": correlation_id,
+                    }
+                )
             )
+            raise
+        observe_request(response.status_code)
+        # Commands and errors are always logged. Successful operational reads are
+        # sampled because metrics/traces already retain their aggregate signal and
+        # synchronously writing every access line becomes an avoidable bottleneck
+        # during a burst.
+        should_log = (
+            request.method != "GET"
+            or response.status_code >= 400
+            or next(_successful_read_counter) % 100 == 0
         )
-        raise
-    observe_request(response.status_code)
-    logger.info(
-        json.dumps(
-            {
-                "event": "http.request_completed",
-                "method": request.method,
-                "path": request.url.path,
-                "status_code": response.status_code,
-                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
-                "tenant_id": getattr(request.state, "tenant_id", request.headers.get("X-Tenant-ID") or "public"),
-                "correlation_id": correlation_id,
-            }
-        )
-    )
-    return response
+        if should_log:
+            logger.info(
+                json.dumps(
+                    {
+                        "event": "http.request_completed",
+                        "method": request.method,
+                        "path": request.url.path,
+                        "status_code": response.status_code,
+                        "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+                        "tenant_id": getattr(request.state, "tenant_id", request.headers.get("X-Tenant-ID") or "public"),
+                        "correlation_id": correlation_id,
+                        "sampled": request.method == "GET" and response.status_code < 400,
+                    }
+                )
+            )
+        return response
+    finally:
+        observe_request_end()
 
 app.include_router(health_router)
 app.include_router(auth_router)
@@ -153,24 +180,38 @@ app.include_router(service_delivery_os_router)
 
 
 @app.on_event("startup")
+async def configure_sync_worker_capacity() -> None:
+    """Size Starlette's sync worker limiter for the documented 500-user spike."""
+    anyio.to_thread.current_default_thread_limiter().total_tokens = settings.api_threadpool_tokens
+
+
+@app.on_event("startup")
 def startup() -> None:
     validate_production_runtime()
     configure_tracing(settings)
-    init_db()
-    db = SessionLocal()
+    startup_lock = engine.connect() if engine.dialect.name == "postgresql" else None
     try:
-        ensure_component_definitions(db)
-        ensure_service_catalog(db)
-        ensure_prompt_versions(db)
-        if settings.runtime_profile == "homologation":
-            set_tenant_context(db, settings.default_tenant_id)
-            provider.ensure_workflows(db, tenant_id=settings.default_tenant_id)
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+        if startup_lock is not None:
+            startup_lock.execute(text("SELECT pg_advisory_lock(736341928)"))
+        init_db()
+        db = SessionLocal()
+        try:
+            ensure_component_definitions(db)
+            ensure_service_catalog(db)
+            ensure_prompt_versions(db)
+            if settings.runtime_profile == "homologation":
+                set_tenant_context(db, settings.default_tenant_id)
+                provider.ensure_workflows(db, tenant_id=settings.default_tenant_id)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
     finally:
-        db.close()
+        if startup_lock is not None:
+            startup_lock.execute(text("SELECT pg_advisory_unlock(736341928)"))
+            startup_lock.close()
 
 
 @app.on_event("shutdown")

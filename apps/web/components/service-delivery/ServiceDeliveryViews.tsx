@@ -1,13 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import type { FormEvent, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Activity,
   AlertTriangle,
   Award,
-  BadgeCheck,
   Ban,
   BriefcaseBusiness,
   CalendarClock,
@@ -18,24 +16,14 @@ import {
   Layers3,
   LockKeyhole,
   Play,
-  RefreshCw,
   ShieldCheck,
   Sparkles,
   Users
 } from "lucide-react";
+import { EmptyState, MetricCard } from "@/components/common/OperationalUI";
 import { apiGet, apiPost } from "@/lib/api";
+import { StatusBadge } from "@/lib/status";
 import type { Dict } from "@/lib/types";
-
-function statusTone(status: string) {
-  if (["active", "approved", "granted", "completed"].includes(status)) return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  if (["pending", "awaiting_prerequisites", "ready"].includes(status)) return "border-amber-200 bg-amber-50 text-amber-900";
-  if (["blocked", "rejected", "suspended", "expired", "revoked"].includes(status)) return "border-rose-200 bg-rose-50 text-rose-800";
-  return "border-slate-200 bg-slate-50 text-slate-700";
-}
-
-function StatusPill({ status }: { status: string }) {
-  return <span className={`inline-flex rounded border px-2 py-1 text-xs font-medium ${statusTone(status)}`}>{status || "unknown"}</span>;
-}
 
 function EvidenceBadge({ classification }: { classification: string }) {
   const tones: Record<string, string> = {
@@ -56,10 +44,6 @@ function ProgressBar({ value }: { value: number }) {
       <div className="h-2 rounded bg-cyan-600" style={{ width: `${bounded}%` }} />
     </div>
   );
-}
-
-function EmptyState({ label }: { label: string }) {
-  return <div className="rounded-md border border-dashed border-slate-300 px-4 py-8 text-sm text-slate-500">{label}</div>;
 }
 
 function ScoreBreakdown({ scores }: { scores: Dict[] }) {
@@ -105,7 +89,7 @@ function ActivityList({ activity }: { activity: Dict[] }) {
           <div className="mt-1 text-xs text-slate-500">{event.summary}</div>
         </div>
       ))}
-      {!activity.length && <EmptyState label="No activity recorded." />}
+      {!activity.length && <EmptyState title="No activity recorded." />}
     </div>
   );
 }
@@ -130,26 +114,14 @@ function ComponentRows({ components }: { components: Dict[] }) {
             <div className="text-xs text-slate-500">{component.component_code}</div>
           </div>
           <div className="text-slate-600">{component.current_phase || "Queued"}</div>
-          <div><StatusPill status={component.status} /></div>
+          <div><StatusBadge status={component.status} /></div>
           <div>
             <div className="mb-1 text-xs text-slate-500">{Number(component.progress || 0).toFixed(0)}%</div>
             <ProgressBar value={Number(component.progress || 0)} />
           </div>
         </Link>
       ))}
-      {!components.length && <div className="p-4"><EmptyState label="No components available." /></div>}
-    </div>
-  );
-}
-
-function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: string | number }) {
-  return (
-    <div className="panel p-4">
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-slate-500">{label}</div>
-        <div className="text-slate-500">{icon}</div>
-      </div>
-      <div className="mt-3 text-3xl font-semibold text-slate-950">{value}</div>
+      {!components.length && <div className="p-4"><EmptyState title="No components available." /></div>}
     </div>
   );
 }
@@ -170,12 +142,12 @@ export function ProgramView({ programId }: { programId: string }) {
             <h1 className="text-2xl font-semibold">{program.name}</h1>
             <p className="mt-1 text-sm text-slate-600">{program.description}</p>
           </div>
-          <StatusPill status={program.status} />
+          <StatusBadge status={program.status} />
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <Metric icon={<Users className="h-4 w-4" />} label="Sponsor" value={program.sponsor || "N/A"} />
-          <Metric icon={<CalendarClock className="h-4 w-4" />} label="Target" value={program.target_end_date || "N/A"} />
-          <Metric icon={<Layers3 className="h-4 w-4" />} label="Projects" value={(program.projects || []).length} />
+          <MetricCard icon={<Users className="h-4 w-4" />} label="Sponsor" value={program.sponsor || "N/A"} />
+          <MetricCard icon={<CalendarClock className="h-4 w-4" />} label="Target" value={program.target_end_date || "N/A"} />
+          <MetricCard icon={<Layers3 className="h-4 w-4" />} label="Projects" value={(program.projects || []).length} />
         </div>
       </header>
       <ScoreBreakdown scores={program.scores || []} />
@@ -199,7 +171,7 @@ export function ProgramView({ programId }: { programId: string }) {
             <div key={contract.id} className="rounded-md border border-line p-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="font-medium">{contract.contract_number}</div>
-                <StatusPill status={contract.status} />
+                <StatusBadge status={contract.status} />
               </div>
               <div className="mt-1 text-sm text-slate-500">{contract.scope_summary}</div>
             </div>
@@ -246,7 +218,7 @@ export function ComponentView({ componentId }: { componentId: string }) {
             <p className="mt-1 text-sm text-slate-600">{component.definition?.description}</p>
           </div>
           <div className="flex items-center gap-2">
-            <StatusPill status={component.status} />
+            <StatusBadge status={component.status} />
             <button onClick={start} className="inline-flex items-center gap-2 rounded-md bg-slate-950 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800">
               <Play className="h-4 w-4" /> Start
             </button>
@@ -272,7 +244,7 @@ export function ComponentView({ componentId }: { componentId: string }) {
                 <div key={item.name} className="rounded-md border border-line p-3">
                   <div className="flex items-center justify-between">
                     <div className="font-medium">{item.name}</div>
-                    <StatusPill status={String(item.status || "")} />
+                    <StatusBadge status={String(item.status || "")} />
                   </div>
                   <div className="mt-2 text-xs text-slate-500">{item.points || 0} points</div>
                 </div>
@@ -285,7 +257,7 @@ export function ComponentView({ componentId }: { componentId: string }) {
               {(component.tasks_json || []).map((task: Dict) => (
                 <div key={task.name} className="flex items-center justify-between rounded-md border border-line px-3 py-2">
                   <span className="text-sm">{task.name}</span>
-                  <StatusPill status={String(task.status || "")} />
+                  <StatusBadge status={String(task.status || "")} />
                 </div>
               ))}
             </div>
@@ -296,7 +268,7 @@ export function ComponentView({ componentId }: { componentId: string }) {
             <div className="mb-3 flex items-center gap-2 font-semibold"><LockKeyhole className="h-4 w-4" /> Entitlement</div>
             {entitlement ? (
               <div className="space-y-3">
-                <StatusPill status={entitlement.status} />
+                <StatusBadge status={entitlement.status} />
                 <div className="text-sm text-slate-600">Valid until {entitlement.valid_until || "N/A"}</div>
                 <div className="grid gap-2">
                   {Object.entries(entitlement.limits_json || {}).map(([key, value]) => (
@@ -318,7 +290,7 @@ export function ComponentView({ componentId }: { componentId: string }) {
                 <div key={approval.id} className="rounded-md border border-line p-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-sm font-medium">{approval.title}</div>
-                    <StatusPill status={approval.status} />
+                    <StatusBadge status={approval.status} />
                   </div>
                   {approval.status === "pending" && (
                     <div className="mt-3 flex gap-2">
@@ -364,7 +336,7 @@ export function AdminContractsView() {
             <div key={contract.id} className="rounded-md border border-line p-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="font-medium">{contract.contract_number}</div>
-                <StatusPill status={contract.status} />
+                <StatusBadge status={contract.status} />
               </div>
               <div className="mt-1 text-sm text-slate-500">{contract.scope_summary}</div>
             </div>
@@ -378,7 +350,7 @@ export function AdminContractsView() {
             <div key={entitlement.id} className="rounded-md border border-line p-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="font-medium">{entitlement.component_code}</div>
-                <StatusPill status={entitlement.status} />
+                <StatusBadge status={entitlement.status} />
               </div>
               <div className="mt-2 text-xs text-slate-500">Valid {entitlement.valid_from || "N/A"} to {entitlement.valid_until || "N/A"}</div>
               <div className="mt-3 flex flex-wrap gap-1">
@@ -413,7 +385,7 @@ function AICopilotPanel({ activities }: { activities: Dict[] }) {
           {latest.agent_name} concluded {latest.activity_type} with {confidence(Number(latest.confidence || 0))} confidence.
         </div>
       ) : (
-        <EmptyState label="No AI activity recorded yet." />
+        <EmptyState title="No AI activity recorded yet." />
       )}
       <div className="mt-3 grid gap-2">
         {recommendations.map((item, index) => (
@@ -449,7 +421,7 @@ function AIActivityRows({ activities }: { activities: Dict[] }) {
           </div>
         </div>
       ))}
-      {!activities.length && <EmptyState label="No AI activities found." />}
+      {!activities.length && <EmptyState title="No AI activities found." />}
     </div>
   );
 }
@@ -490,13 +462,13 @@ export function OpportunityView({ opportunityId }: { opportunityId: string }) {
             <h1 className="text-2xl font-semibold">{opportunity.title}</h1>
             <p className="mt-1 text-sm text-slate-600">{opportunity.summary || "No summary yet."}</p>
           </div>
-          <StatusPill status={opportunity.status} />
+          <StatusBadge status={opportunity.status} />
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-4">
-          <Metric icon={<Users className="h-4 w-4" />} label="Prospect" value={opportunity.prospect?.company || "N/A"} />
-          <Metric icon={<Gauge className="h-4 w-4" />} label="Validation" value={opportunity.validation_score == null ? "—" : Number(opportunity.validation_score).toFixed(0)} />
-          <Metric icon={<AlertTriangle className="h-4 w-4" />} label="Risk" value={opportunity.risk_level || "N/A"} />
-          <Metric icon={<BriefcaseBusiness className="h-4 w-4" />} label="Potential" value={money(Number(opportunity.value_potential || 0))} />
+          <MetricCard icon={<Users className="h-4 w-4" />} label="Prospect" value={opportunity.prospect?.company || "N/A"} />
+          <MetricCard icon={<Gauge className="h-4 w-4" />} label="Validation" value={opportunity.validation_score == null ? "—" : Number(opportunity.validation_score).toFixed(0)} />
+          <MetricCard icon={<AlertTriangle className="h-4 w-4" />} label="Risk" value={opportunity.risk_level || "N/A"} />
+          <MetricCard icon={<BriefcaseBusiness className="h-4 w-4" />} label="Potential" value={money(Number(opportunity.value_potential || 0))} />
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <button onClick={() => command(`/api/v1/opportunities/${opportunity.id}/validate`, "Idea validation refreshed.")} className="rounded-md border border-line bg-white px-3 py-2 text-sm font-medium">Validate</button>
@@ -542,7 +514,7 @@ export function OpportunityView({ opportunityId }: { opportunityId: string }) {
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="text-sm text-slate-600">Blueprint <span className="font-medium text-slate-900">{opportunity.mvp_spec.blueprint_ref}</span></div>
-                  <StatusPill status={opportunity.mvp_spec.status} />
+                  <StatusBadge status={opportunity.mvp_spec.status} />
                 </div>
                 <div className="grid gap-3 md:grid-cols-3">
                   {Object.entries(opportunity.mvp_spec.scope_json || {}).map(([key, value]) => (
@@ -556,7 +528,7 @@ export function OpportunityView({ opportunityId }: { opportunityId: string }) {
                 </div>
               </div>
             ) : (
-              <EmptyState label="MVP scope has not been generated." />
+              <EmptyState title="MVP scope has not been generated." />
             )}
           </div>
           {opportunity.proposal && (
@@ -633,13 +605,13 @@ export function MvpRunView({ mvpRunId }: { mvpRunId: string }) {
             <h1 className="text-2xl font-semibold">{run.opportunity?.title || "MVP Run"}</h1>
             <p className="mt-1 text-sm text-slate-600">Package, tests, gates, proposal and human approval.</p>
           </div>
-          <StatusPill status={run.status} />
+          <StatusBadge status={run.status} />
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-4">
-          <Metric icon={<Gauge className="h-4 w-4" />} label="Progress" value={`${Number(run.progress || 0).toFixed(0)}%`} />
-          <Metric icon={<FileText className="h-4 w-4" />} label="Tests" value={run.test_summary_json?.status === "not_run" ? "Not run" : `${Number(run.test_summary_json?.passed || 0)} passed`} />
-          <Metric icon={<ShieldCheck className="h-4 w-4" />} label="Gates" value={gates.length} />
-          <Metric icon={<Sparkles className="h-4 w-4" />} label="AI Activities" value={activities.length} />
+          <MetricCard icon={<Gauge className="h-4 w-4" />} label="Progress" value={`${Number(run.progress || 0).toFixed(0)}%`} />
+          <MetricCard icon={<FileText className="h-4 w-4" />} label="Tests" value={run.test_summary_json?.status === "not_run" ? "Not run" : `${Number(run.test_summary_json?.passed || 0)} passed`} />
+          <MetricCard icon={<ShieldCheck className="h-4 w-4" />} label="Gates" value={gates.length} />
+          <MetricCard icon={<Sparkles className="h-4 w-4" />} label="AI Activities" value={activities.length} />
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <button onClick={() => decide("approve")} className="inline-flex items-center gap-2 rounded-md bg-emerald-700 px-3 py-2 text-sm font-medium text-white"><CheckCircle2 className="h-4 w-4" /> Approve</button>
@@ -661,7 +633,7 @@ export function MvpRunView({ mvpRunId }: { mvpRunId: string }) {
                 <div key={gate.id} className="rounded-md border border-line p-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="font-medium">{gate.id}</div>
-                    <StatusPill status={gate.status} />
+                    <StatusBadge status={gate.status} />
                   </div>
                   <div className="mt-3"><ProgressBar value={Number(gate.score || 0)} /></div>
                 </div>
@@ -673,7 +645,7 @@ export function MvpRunView({ mvpRunId }: { mvpRunId: string }) {
             {pkg ? (
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <StatusPill status={pkg.status || "created"} />
+                  <StatusBadge status={pkg.status || "created"} />
                   <div className="text-sm text-slate-500">{pkg.blueprint_ref}</div>
                 </div>
                 <div className="grid gap-2 md:grid-cols-2">
@@ -686,7 +658,7 @@ export function MvpRunView({ mvpRunId }: { mvpRunId: string }) {
                 </div>
               </div>
             ) : (
-              <EmptyState label="Package not loaded." />
+              <EmptyState title="Package not loaded." />
             )}
           </div>
           <div className="panel p-4">
@@ -702,7 +674,7 @@ export function MvpRunView({ mvpRunId }: { mvpRunId: string }) {
                   <div className="mt-2 text-xs text-slate-500">Sources: {(artifact.source_refs_json || []).join(", ") || "not recorded"}</div>
                 </details>
               ))}
-              {!artifacts.length && <EmptyState label="No evidence artifacts materialized." />}
+              {!artifacts.length && <EmptyState title="No evidence artifacts materialized." />}
             </div>
           </div>
           {run.proposal && (

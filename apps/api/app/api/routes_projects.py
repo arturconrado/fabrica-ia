@@ -5,7 +5,7 @@ from app.auth.dependencies import Principal, audit, require_roles
 from app.db.session import get_db
 from app.models import Project
 from app.schemas import ProjectCreate
-from app.services.project_service import create_project
+from app.services.run_service import provider
 from app.services.serialization import model_to_dict, models_to_dict
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -18,7 +18,7 @@ def post_project(
     principal: Principal = Depends(require_roles("owner", "admin", "operator")),
     db: Session = Depends(get_db),
 ):
-    project = create_project(db, payload.name, payload.description, tenant_id=principal.tenant_id)
+    project = provider.create_project(db, payload.name, payload.description, tenant_id=principal.tenant_id)
     audit(db, principal, "project.created", "project", project.id)
     db.commit()
     db.refresh(project)

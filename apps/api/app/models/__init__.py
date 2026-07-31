@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, JSON, Float, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, JSON, Float, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -56,6 +56,7 @@ class Membership(Base):
     tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), index=True)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("user_accounts.id"), index=True)
     role: Mapped[str] = mapped_column(String, default="operator")
+    operator_profile: Mapped[str] = mapped_column(String, default="generalist")
     status: Mapped[str] = mapped_column(String, default="active")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
@@ -335,7 +336,9 @@ class TemporalCommandOutbox(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), index=True)
-    run_id: Mapped[str] = mapped_column(String, ForeignKey("workflow_runs.id"), index=True)
+    run_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("workflow_runs.id"), nullable=True, index=True)
+    aggregate_type: Mapped[str] = mapped_column(String, default="workflow_run", index=True)
+    aggregate_id: Mapped[str] = mapped_column(String, default="", index=True)
     command_type: Mapped[str] = mapped_column(String, index=True)
     workflow_id: Mapped[str] = mapped_column(String, index=True)
     signal_name: Mapped[str] = mapped_column(String, default="")
@@ -754,6 +757,7 @@ class FileChange(Base):
     diff: Mapped[str] = mapped_column(Text, default="")
     model_call_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("model_calls.id"), nullable=True, index=True)
     step_execution_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("agent_step_executions.id"), nullable=True, index=True)
+    spec_refs_json: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -772,6 +776,7 @@ class TestReport(Base):
     stderr: Mapped[str] = mapped_column(Text, default="")
     timed_out: Mapped[bool] = mapped_column(default=False)
     duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    spec_refs_json: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -815,6 +820,10 @@ class RequirementTrace(Base):
     file_path: Mapped[str] = mapped_column(String)
     test_name: Mapped[str] = mapped_column(String)
     evidence: Mapped[str] = mapped_column(String)
+    criterion_ids_json: Mapped[list] = mapped_column(JSON, default=list)
+    invariant_ids_json: Mapped[list] = mapped_column(JSON, default=list)
+    test_report_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("test_reports.id"), nullable=True, index=True)
+    provenance: Mapped[str] = mapped_column(String, default="declared", index=True)
     status: Mapped[str] = mapped_column(String, default="pass")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
@@ -1304,6 +1313,12 @@ class ExecutionUnit(Base):
     max_continuations: Mapped[int] = mapped_column(Integer, default=2)
     input_budget_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_budget_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    context_hash: Mapped[str] = mapped_column(String, default="", index=True)
+    context_manifest_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    estimated_input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    source_input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    saved_input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    optimization_policy_version: Mapped[str] = mapped_column(String, default="", index=True)
     input_hash: Mapped[str] = mapped_column(String, default="", index=True)
     output_hash: Mapped[str] = mapped_column(String, default="", index=True)
     output_json: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -1597,6 +1612,42 @@ class McpToolInvocation(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class PluginInvocation(Base):
+    """Tenant-scoped, content-free audit record for a pinned production plugin."""
+
+    __tablename__ = "plugin_invocations"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "invocation_key", name="uq_plugin_invocation_key"),
+        CheckConstraint("plugin_name IN ('ponytail', 'cavekit')", name="ck_plugin_invocation_name"),
+        CheckConstraint(
+            "status IN ('registered', 'completed', 'not_applicable', 'failed')",
+            name="ck_plugin_invocation_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), index=True)
+    run_id: Mapped[str] = mapped_column(String, ForeignKey("workflow_runs.id"), index=True)
+    execution_unit_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("execution_units.id"), nullable=True, index=True)
+    plugin_name: Mapped[str] = mapped_column(String, index=True)
+    plugin_version: Mapped[str] = mapped_column(String, index=True)
+    source_revision: Mapped[str] = mapped_column(String, index=True)
+    command: Mapped[str] = mapped_column(String, index=True)
+    mode: Mapped[str] = mapped_column(String, default="", index=True)
+    node_id: Mapped[str] = mapped_column(String, default="", index=True)
+    phase: Mapped[str] = mapped_column(String, default="", index=True)
+    action: Mapped[str] = mapped_column(String, default="execute", index=True)
+    status: Mapped[str] = mapped_column(String, default="completed", index=True)
+    invocation_key: Mapped[str] = mapped_column(String, index=True)
+    input_hash: Mapped[str] = mapped_column(String, default="", index=True)
+    output_hash: Mapped[str] = mapped_column(String, default="", index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str] = mapped_column(Text, default="")
+    duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    trace_id: Mapped[str] = mapped_column(String, default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+
+
 class SandboxExecution(Base):
     __tablename__ = "sandbox_executions"
 
@@ -1637,6 +1688,8 @@ class OfferingVersion(Base):
     offering_id: Mapped[str] = mapped_column(String, ForeignKey("service_offerings.id"), index=True)
     version: Mapped[str] = mapped_column(String, index=True)
     status: Mapped[str] = mapped_column(String, default="active", index=True)
+    display_name: Mapped[str] = mapped_column(String, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
     duration_label: Mapped[str] = mapped_column(String, default="")
     cadence: Mapped[str] = mapped_column(String, default="one_off")
     definition_json: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -1679,6 +1732,7 @@ class EngagementPlan(Base):
     plan_json: Mapped[dict] = mapped_column(JSON, default=dict)
     context_refs_json: Mapped[list] = mapped_column(JSON, default=list)
     model_call_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("model_calls.id"), nullable=True, index=True)
+    created_by_user_id: Mapped[str] = mapped_column(String, default="", index=True)
     approved_by_user_id: Mapped[str] = mapped_column(String, default="")
     approval_comment: Mapped[str] = mapped_column(Text, default="")
     approved_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
@@ -1711,8 +1765,11 @@ class ServiceWorkItem(Base):
     engagement_id: Mapped[str] = mapped_column(String, ForeignKey("engagements.id"), index=True)
     workstream_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("workstreams.id"), nullable=True, index=True)
     deliverable_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("service_deliverables.id"), nullable=True, index=True)
+    cycle_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("service_cycles.id"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String)
     description: Mapped[str] = mapped_column(Text, default="")
+    execution_mode: Mapped[str] = mapped_column(String, default="agent", index=True)
+    operation_key: Mapped[str] = mapped_column(String, default="")
     status: Mapped[str] = mapped_column(String, default="queued", index=True)
     priority: Mapped[str] = mapped_column(String, default="normal", index=True)
     due_at: Mapped[Optional[datetime]] = mapped_column(nullable=True, index=True)
@@ -1735,6 +1792,7 @@ class ServiceDeliverable(Base):
     tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), index=True)
     engagement_id: Mapped[str] = mapped_column(String, ForeignKey("engagements.id"), index=True)
     workstream_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("workstreams.id"), nullable=True, index=True)
+    cycle_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("service_cycles.id"), nullable=True, index=True)
     template_key: Mapped[str] = mapped_column(String, index=True)
     title: Mapped[str] = mapped_column(String)
     description: Mapped[str] = mapped_column(Text, default="")
@@ -1784,7 +1842,100 @@ class OutcomeMetric(Base):
     observed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     record_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class ServiceCycle(Base):
+    __tablename__ = "service_cycles"
+    __table_args__ = (UniqueConstraint("tenant_id", "engagement_id", "sequence", name="uq_service_cycle_sequence"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), index=True)
+    engagement_id: Mapped[str] = mapped_column(String, ForeignKey("engagements.id"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String, default="planned", index=True)
+    period_start: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    period_end: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    started_by_user_id: Mapped[str] = mapped_column(String, default="", index=True)
+    approved_by_user_id: Mapped[str] = mapped_column(String, default="", index=True)
+    approval_comment: Mapped[str] = mapped_column(Text, default="")
+    record_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class ServiceExecution(Base):
+    __tablename__ = "service_executions"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "work_item_id", name="uq_service_execution_work_item"),
+        Index("ix_service_execution_queue", "status", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), index=True)
+    engagement_id: Mapped[str] = mapped_column(String, ForeignKey("engagements.id"), index=True)
+    work_item_id: Mapped[str] = mapped_column(String, ForeignKey("service_work_items.id"), index=True)
+    deliverable_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("service_deliverables.id"), nullable=True, index=True)
+    cycle_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("service_cycles.id"), nullable=True, index=True)
+    execution_mode: Mapped[str] = mapped_column(String, default="agent", index=True)
+    status: Mapped[str] = mapped_column(String, default="queued", index=True)
+    temporal_workflow_id: Mapped[str] = mapped_column(String, default="", index=True)
+    temporal_run_id: Mapped[str] = mapped_column(String, default="")
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    requested_by_user_id: Mapped[str] = mapped_column(String, default="", index=True)
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    evidence_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    estimated_cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    record_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    started_at: Mapped[Optional[datetime]] = mapped_column(nullable=True, index=True)
+    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(nullable=True, index=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class ServiceAcceptanceCheck(Base):
+    __tablename__ = "service_acceptance_checks"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "engagement_id", "cycle_key", "check_key", name="uq_service_acceptance_check"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), index=True)
+    engagement_id: Mapped[str] = mapped_column(String, ForeignKey("engagements.id"), index=True)
+    deliverable_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("service_deliverables.id"), nullable=True, index=True)
+    cycle_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("service_cycles.id"), nullable=True, index=True)
+    cycle_key: Mapped[str] = mapped_column(String, default="engagement", index=True)
+    scope: Mapped[str] = mapped_column(String, default="offering", index=True)
+    check_key: Mapped[str] = mapped_column(String, index=True)
+    description: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String, default="pending", index=True)
+    evidence_refs_json: Mapped[list] = mapped_column(JSON, default=list)
+    impact: Mapped[str] = mapped_column(Text, default="")
+    mitigation: Mapped[str] = mapped_column(Text, default="")
+    recorded_by_user_id: Mapped[str] = mapped_column(String, default="", index=True)
+    decided_by_user_id: Mapped[str] = mapped_column(String, default="", index=True)
+    decision_comment: Mapped[str] = mapped_column(Text, default="")
+    decided_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    record_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class EngagementDependency(Base):
+    __tablename__ = "engagement_dependencies"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "engagement_id", "depends_on_engagement_id", name="uq_engagement_dependency"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), index=True)
+    engagement_id: Mapped[str] = mapped_column(String, ForeignKey("engagements.id"), index=True)
+    depends_on_engagement_id: Mapped[str] = mapped_column(String, ForeignKey("engagements.id"), index=True)
+    dependency_type: Mapped[str] = mapped_column(String, default="finish_to_start", index=True)
+    status: Mapped[str] = mapped_column(String, default="pending", index=True)
+    evidence_refs_json: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
 
 
 class AgentTemplate(Base):

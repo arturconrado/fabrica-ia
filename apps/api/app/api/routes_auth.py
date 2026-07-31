@@ -5,17 +5,26 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from app.auth.dependencies import Principal, audit, ensure_tenant, ensure_user_membership, get_current_principal, require_roles
+from app.auth.dependencies import (
+    Principal,
+    audit,
+    ensure_tenant,
+    ensure_user_membership,
+    get_current_principal,
+    invalidate_authorization_cache,
+    require_roles,
+    tenant_runtime_configuration,
+)
 from app.core.config import get_settings
 from app.db.session import get_db, set_tenant_context
 from app.models import Membership, Tenant, UserAccount
-from app.schemas import MemberCreate, TenantCreate
+from app.schemas import MemberCreate, OperatorProfileUpdate, TenantCreate
 from app.services.serialization import model_to_dict, models_to_dict
 
 router = APIRouter(tags=["auth"])
 
 
-def _principal_payload(principal: Principal):
+def _principal_payload(principal: Principal, operator_profile: str = "generalist"):
     return {
         "tenant_id": principal.tenant_id,
         "user_id": principal.user_id,
@@ -23,7 +32,12 @@ def _principal_payload(principal: Principal):
         "email": principal.email,
         "name": principal.name,
         "role": principal.role,
+        "operator_profile": operator_profile,
         "auth_mode": principal.auth_mode,
+        # `azp` identifies the OAuth client without exposing token material.
+        # Readiness gates use it to distinguish the dedicated service account
+        # from an owner/VP browser session.
+        "token_client_id": str(principal.claims.get("azp") or ""),
     }
 
 
@@ -38,9 +52,19 @@ def _accessible_tenants(db: Session, principal: Principal):
     )
 
 
+def _operator_profile(db: Session, principal: Principal) -> str:
+    membership = db.query(Membership).filter_by(
+        tenant_id=principal.tenant_id, user_id=principal.user_id, status="active"
+    ).first()
+    return membership.operator_profile if membership else "generalist"
+
+
 @router.get("/auth/me")
-def me(principal: Principal = Depends(get_current_principal)):
-    return _principal_payload(principal)
+def me(
+    principal: Principal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
+    return _principal_payload(principal, _operator_profile(db, principal))
 
 
 @router.get("/auth/session")
@@ -50,9 +74,36 @@ def session_context(
 ):
     """Return the BFF bootstrap in one authenticated, tenant-bound request."""
     return {
-        "me": _principal_payload(principal),
+        "me": _principal_payload(principal, _operator_profile(db, principal)),
         "tenants": models_to_dict(_accessible_tenants(db, principal)),
     }
+
+
+@router.patch("/auth/me/operator-profile")
+def update_operator_profile(
+    payload: OperatorProfileUpdate,
+    principal: Principal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+):
+    membership = db.query(Membership).filter_by(
+        tenant_id=principal.tenant_id, user_id=principal.user_id, status="active"
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=404, detail="Active membership not found")
+    if membership.operator_profile == payload.operator_profile:
+        return {"operator_profile": membership.operator_profile}
+    membership.operator_profile = payload.operator_profile
+    audit(
+        db, principal, "membership.operator_profile_changed", "membership", membership.id,
+        {
+            "summary": "Operator professional lens changed without altering RBAC",
+            "operator_profile": payload.operator_profile,
+            "role": membership.role,
+        },
+    )
+    db.commit()
+    invalidate_authorization_cache(tenant_id=principal.tenant_id, subject=principal.subject)
+    return {"operator_profile": membership.operator_profile}
 
 
 @router.get("/tenants")
@@ -76,23 +127,11 @@ def create_tenant(
     source_tenant_id = principal.tenant_id
     tenant = ensure_tenant(db, tenant_id, payload.name)
     tenant.status = "onboarding"
-    tenant.runtime_configuration_json = {
-        "onboarding_status": "pending_assisted_acceptance",
-        "build_mode": "ai_native" if settings.generative_build_enabled else "prebuild_only",
-        "llm_real": "opt_in",
-        "rag_generation": "extractive_only",
-        "generative_build": settings.generative_build_enabled,
-        "regulated_data": False,
-        "storage_prefix": f"tenants/{tenant.id}/",
-        "knowledge_storage_prefix": f"tenants/{tenant.id}/knowledge/",
-        "limits": {
-            "users": settings.pilot_max_users_per_tenant,
-            "concurrent_workflows": settings.pilot_max_concurrent_workflows_per_tenant,
-            "knowledge_bases": settings.knowledge_max_bases_per_tenant,
-            "knowledge_documents": settings.knowledge_max_documents_per_tenant,
-            "knowledge_total_chars": settings.knowledge_max_total_chars_per_tenant,
-        },
-    }
+    tenant.runtime_configuration_json = tenant_runtime_configuration(
+        settings,
+        tenant.id,
+        onboarding_status="pending_assisted_acceptance",
+    )
     tenant.retention_policy_json = {"backups_days": 7, "rpo_hours": 24, "rto_target_hours": 4}
     set_tenant_context(db, tenant.id, principal.user_id)
     ensure_user_membership(db, tenant.id, principal.subject, principal.email, principal.name, "owner")
@@ -199,7 +238,12 @@ def add_member(
         email=payload.email,
         name=payload.name,
         role=payload.role,
+        operator_profile=payload.operator_profile,
     )
-    audit(db, principal, "member.added", "membership", membership.id, {"subject": user.subject, "role": membership.role})
+    audit(
+        db, principal, "member.added", "membership", membership.id,
+        {"subject": user.subject, "role": membership.role, "operator_profile": membership.operator_profile},
+    )
     db.commit()
+    invalidate_authorization_cache(tenant_id=tenant_id, subject=user.subject)
     return {"membership": model_to_dict(membership), "user": model_to_dict(user)}

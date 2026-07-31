@@ -4,7 +4,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.agents.ai_native_contracts import stable_hash
@@ -231,6 +231,7 @@ class ModelGateway:
         provider_options = {
             "cache_mode": cache_mode,
             "prompt_cache_key": prompt_cache_key if cache_mode == "openai_key" else "",
+            "provider": capability.provider if capability else "",
             "upstream_model": capability.upstream_model if capability else model_name,
         }
         request_json = {
@@ -478,11 +479,19 @@ class ModelGateway:
         projection: CostProjection,
     ) -> None:
         settings = get_settings()
+        projected = projection.cost_usd if projection.provenance == "historical" else 0.0
+        homologation_limit = float(settings.homologation_global_budget_usd or 0.0)
+        if homologation_limit:
+            global_spend = self._homologation_global_spend(db)
+            if global_spend >= homologation_limit or global_spend + projected + scope.envelope.reserved_budget_usd > homologation_limit:
+                raise ModelGatewayError(
+                    f"AI homologation global budget exhausted; spent=${global_spend:.6f}, "
+                    f"projected=${projected:.6f}, hard_limit=${homologation_limit:.6f}"
+                )
         if run_id:
             run = db.query(WorkflowRun).filter_by(id=run_id, tenant_id=tenant_id).first()
             if run:
                 limit = float(run.ai_budget_usd or settings.model_run_budget_usd)
-                projected = projection.cost_usd if projection.provenance == "historical" else 0.0
                 if float(run.ai_cost_usd or 0.0) + projected + scope.envelope.reserved_budget_usd > limit:
                     raise ModelGatewayError(
                         f"AI run budget exhausted for run {run_id}; projected=${projected:.6f}, "
@@ -491,7 +500,6 @@ class ModelGateway:
         hard_limit = float(scope.envelope.hard_budget_usd or 0.0)
         if hard_limit:
             spent = invocation_spend(db, tenant_id=tenant_id, invocation_id=invocation_id)
-            projected = projection.cost_usd if projection.provenance == "historical" else 0.0
             if spent >= hard_limit or spent + projected + scope.envelope.reserved_budget_usd > hard_limit:
                 raise ModelGatewayError(
                     f"AI operation budget exhausted for {scope.scope_type}:{scope.scope_id}; "
@@ -528,6 +536,11 @@ class ModelGateway:
         call_cost_usd: float,
     ) -> str:
         settings = get_settings()
+        homologation_limit = float(settings.homologation_global_budget_usd or 0.0)
+        if homologation_limit:
+            global_spend = self._homologation_global_spend(db)
+            if global_spend + call_cost_usd > homologation_limit:
+                return f"AI call would exceed the ${homologation_limit:.2f} global homologation budget"
         if run_id:
             run = db.query(WorkflowRun).filter_by(id=run_id, tenant_id=tenant_id).first()
             if run:
@@ -557,6 +570,17 @@ class ModelGateway:
         if monthly_cost + call_cost_usd > tenant_limit:
             return f"AI call would exceed the ${tenant_limit:.2f} monthly budget for tenant {tenant_id}"
         return ""
+
+    @staticmethod
+    def _homologation_global_spend(db: Session) -> float:
+        if db.get_bind().dialect.name == "postgresql":
+            payload = db.execute(text("SELECT public.asf_aggregate_technical_metrics()")).scalar_one()
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            return float((payload or {}).get("model_cost_usd") or 0.0)
+        return float(
+            db.execute(text("SELECT COALESCE(SUM(estimated_cost_usd), 0) FROM model_calls")).scalar_one() or 0.0
+        )
 
     @staticmethod
     def _invocation_record(
@@ -783,18 +807,33 @@ class ModelGateway:
     ) -> Dict[str, Any]:
         settings = get_settings()
         if not settings.litellm_api_key and not (settings.openai_api_key or settings.openrouter_api_key):
-            raise ModelGatewayError("ASF_LITELLM_API_KEY plus OPENROUTER_API_KEY or OPENAI_API_KEY is required for real LLM calls")
+            raise ModelGatewayError(
+                "A LiteLLM proxy key or a direct OPENROUTER_API_KEY/OPENAI_API_KEY is required for real LLM calls"
+            )
         try:
             from litellm import completion, completion_cost
         except Exception as exc:  # pragma: no cover - dependency failure path
             raise ModelGatewayError(f"litellm is not installed: {exc}") from exc
 
+        provider_options = provider_options or {}
+        direct_provider = str(provider_options.get("provider") or "").casefold()
+        upstream_model = str(provider_options.get("upstream_model") or model_name)
+
         # LiteLLM's Python client still needs an OpenAI-compatible provider
-        # prefix when it targets a proxy-side custom alias. The prefix is
-        # consumed client-side; the proxy receives the configured alias.
+        # prefix when it targets a proxy-side custom alias. Without a proxy,
+        # preserve the audited alias in the invocation while routing the SDK
+        # to the versioned upstream model declared by the capability manifest.
         sdk_model_name = model_name
         if settings.litellm_base_url and not model_name.startswith("openai/"):
             sdk_model_name = f"openai/{model_name}"
+        elif not settings.litellm_base_url and (
+            direct_provider == "openrouter" or model_name.startswith("openrouter/")
+        ):
+            sdk_model_name = (
+                upstream_model if upstream_model.startswith("openrouter/") else f"openrouter/{upstream_model}"
+            )
+        elif not settings.litellm_base_url and direct_provider == "openai":
+            sdk_model_name = upstream_model
         kwargs: Dict[str, Any] = {
             "model": sdk_model_name,
             "messages": messages,
@@ -806,14 +845,15 @@ class ModelGateway:
             # opaque for several timeout windows.
             "num_retries": 0,
         }
-        provider_options = provider_options or {}
         if provider_options.get("cache_mode") == "openai_key" and provider_options.get("prompt_cache_key"):
             kwargs["prompt_cache_key"] = provider_options["prompt_cache_key"]
         if settings.litellm_base_url:
             kwargs["api_base"] = settings.litellm_base_url
         if settings.litellm_api_key:
             kwargs["api_key"] = settings.litellm_api_key
-        elif model_name.startswith("openrouter/") and settings.openrouter_api_key:
+        elif (
+            direct_provider == "openrouter" or model_name.startswith("openrouter/")
+        ) and settings.openrouter_api_key:
             kwargs["api_key"] = settings.openrouter_api_key
         elif settings.openai_api_key:
             kwargs["api_key"] = settings.openai_api_key

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import Principal, require_roles
-from app.db.session import SessionLocal, get_db, set_tenant_context
+from app.db.session import get_db, set_tenant_context
 from app.models import AIInvocation, ContextBuild, Membership, ModelCall, utcnow
 from app.providers.cost_governor import invocation_to_dict
 from app.schemas.operational import AICostAnalysisResponse, AIInvocationDetailResponse
@@ -14,6 +14,7 @@ from app.schemas.operational import AICostAnalysisResponse, AIInvocationDetailRe
 OPERATIONAL_ROLES = (
     "owner", "super_admin", "tenant_admin", "engagement_manager", "consultant", "admin", "operator",
 )
+AI_COST_READ_ROLES = (*OPERATIONAL_ROLES, "release_validator")
 router = APIRouter(prefix="/api/v1", tags=["ai-cost"])
 
 
@@ -68,7 +69,7 @@ def ai_cost_analysis(
     group_by: Literal["tenant", "journey", "operation", "agent", "model", "policy"] = Query(default="journey"),
     date_from: Optional[datetime] = Query(default=None),
     date_to: Optional[datetime] = Query(default=None),
-    principal: Principal = Depends(require_roles(*OPERATIONAL_ROLES)),
+    principal: Principal = Depends(require_roles(*AI_COST_READ_ROLES)),
     db: Session = Depends(get_db),
 ):
     invocations: list[AIInvocation] = []
@@ -79,22 +80,21 @@ def ai_cost_analysis(
             .execution_options(include_all_tenants=True)
             .all()
         )
-        for membership in memberships:
-            if membership.role not in OPERATIONAL_ROLES:
-                continue
-            tenant_db = SessionLocal()
-            try:
-                set_tenant_context(tenant_db, membership.tenant_id, principal.user_id)
+        try:
+            for membership in memberships:
+                if membership.role not in OPERATIONAL_ROLES:
+                    continue
+                set_tenant_context(db, membership.tenant_id, principal.user_id)
                 invocations.extend(
                     _query_invocations(
-                        tenant_db,
+                        db,
                         tenant_id=membership.tenant_id,
                         date_from=date_from,
                         date_to=date_to,
                     )
                 )
-            finally:
-                tenant_db.close()
+        finally:
+            set_tenant_context(db, principal.tenant_id, principal.user_id)
     else:
         invocations = _query_invocations(
             db,

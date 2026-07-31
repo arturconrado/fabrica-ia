@@ -21,11 +21,13 @@ dependencies = [
   "litellm>=1.60.0",
   "psycopg[binary]>=3.2.0",
   "pyjwt[crypto]>=2.8.0",
-  "redis>=5.0.0",
   "temporalio>=1.18.0,<2.0",
   "opentelemetry-api>=1.25.0",
   "opentelemetry-sdk>=1.25.0",
   "opentelemetry-exporter-otlp-proto-http>=1.25.0",
+  "openpyxl>=3.1.0,<4.0",
+  "python-docx>=1.1.0,<2.0",
+  "python-pptx>=1.0.0,<2.0",
 ]
 
 [project.optional-dependencies]

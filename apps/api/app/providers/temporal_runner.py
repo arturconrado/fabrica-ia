@@ -16,6 +16,30 @@ class TemporalWorkflowRunner:
     def workflow_id(tenant_id: str, run_id: str) -> str:
         return f"software-factory-enterprise-{tenant_id}-{run_id}"
 
+    @staticmethod
+    def service_execution_workflow_id(tenant_id: str, execution_id: str) -> str:
+        return f"service-delivery-{tenant_id}-{execution_id}"
+
+    async def start_service_execution(
+        self, *, tenant_id: str, execution_id: str, workflow_id: str = ""
+    ) -> TemporalStartResult:
+        settings = get_settings()
+        try:
+            from temporalio.client import Client
+            from temporalio.common import WorkflowIDConflictPolicy
+        except Exception as exc:  # pragma: no cover - production dependency path
+            raise RuntimeError(f"temporalio is not installed: {exc}") from exc
+        client = await Client.connect(settings.temporal_address, namespace=settings.temporal_namespace)
+        workflow_id = workflow_id or self.service_execution_workflow_id(tenant_id, execution_id)
+        handle = await client.start_workflow(
+            "ServiceDeliveryExecutionWorkflow",
+            {"tenant_id": tenant_id, "execution_id": execution_id, "temporal_workflow_id": workflow_id},
+            id=workflow_id,
+            task_queue=settings.temporal_task_queue,
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+        )
+        return TemporalStartResult(workflow_id=workflow_id, run_id=handle.result_run_id or "", status="scheduled")
+
     async def start_enterprise_run(
         self,
         *,
@@ -78,8 +102,14 @@ class TemporalWorkflowRunner:
         settings = get_settings()
         try:
             from temporalio.client import Client
+            from temporalio.service import RPCError, RPCStatusCode
         except Exception as exc:  # pragma: no cover - production dependency path
             raise RuntimeError(f"temporalio is not installed: {exc}") from exc
         client = await Client.connect(settings.temporal_address, namespace=settings.temporal_namespace)
-        description = await client.get_workflow_handle(workflow_id).describe()
+        try:
+            description = await client.get_workflow_handle(workflow_id).describe()
+        except RPCError as exc:
+            if exc.status is RPCStatusCode.NOT_FOUND:
+                return True
+            raise
         return getattr(description.status, "name", str(description.status)).upper() != "RUNNING"

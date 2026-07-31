@@ -14,10 +14,19 @@ def _database_url() -> str:
     return url
 
 
-engine = create_engine(
-    _database_url(),
-    connect_args={"check_same_thread": False} if _database_url().startswith("sqlite") else {},
-)
+_url = _database_url()
+_settings = get_settings()
+_engine_options = {
+    "connect_args": {"check_same_thread": False} if _url.startswith("sqlite") else {},
+}
+if not _url.startswith("sqlite"):
+    _engine_options.update({
+        "pool_size": _settings.db_pool_size,
+        "max_overflow": _settings.db_max_overflow,
+        "pool_timeout": _settings.db_pool_timeout_seconds,
+        "pool_pre_ping": True,
+    })
+engine = create_engine(_url, **_engine_options)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -96,13 +105,15 @@ def apply_automatic_tenant_filter(execute_state) -> None:
     """
     if not execute_state.is_select or execute_state.execution_options.get("include_all_tenants"):
         return
+    if execute_state.session.get_bind().dialect.name == "postgresql":
+        return
     tenant_id = execute_state.session.info.get("tenant_id")
     if not tenant_id:
         return
-    from app.models import Base, PromptEvaluation, PromptVersion
+    from app.models import PromptEvaluation, PromptVersion
 
     statement = execute_state.statement
-    for mapper in Base.registry.mappers:
+    for mapper in execute_state.all_mappers:
         entity = mapper.class_
         if not hasattr(entity, "tenant_id"):
             continue

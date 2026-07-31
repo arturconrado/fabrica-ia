@@ -6,7 +6,8 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app.agents.ai_native_context import TenantContextBuilder
-from app.agents.ai_native_contracts import ContextPolicy
+from app.agents.ai_native_contracts import ContextBundle, ContextPolicy, ContextReference
+from app.agents.ai_native_unit_context import UnitContextBuilder
 from app.agents.ai_native_executor import AINativeWorkflowExecutor
 from app.agents.ai_native_executor import apply_unified_patch
 from app.api.routes_runs import get_token_analysis
@@ -29,6 +30,7 @@ from app.models import (
     LearningLesson,
     LearningPolicy,
     ModelCall,
+    ExecutionUnit,
     Project,
     WorkflowNodeState,
     WorkflowRun,
@@ -36,6 +38,21 @@ from app.models import (
 )
 from app.providers.model_gateway import request_max_output_tokens
 from app.schemas.operational import AICostAnalysisResponse, AIInvocationDetailResponse, TokenAnalysisResponse
+
+
+def _workflow_file(name: str) -> Path:
+    """Resolve repository workflows both on the host and in the API image."""
+    candidates = (
+        Path(__file__).resolve().parents[1] / "workflows",
+        Path(__file__).resolve().parents[3] / "workflows"
+        if len(Path(__file__).resolve().parents) > 3
+        else Path("/__missing_repository_root__"),
+    )
+    for directory in candidates:
+        path = directory / name
+        if path.is_file():
+            return path
+    raise FileNotFoundError(f"Workflow fixture is unavailable: {name}")
 from app.workflow.cost_policy_compiler import compile_cost_policy_workflow, load_frozen_v211_workflow
 
 
@@ -76,7 +93,7 @@ def _run(db, tenant_id: str, run_id: str) -> WorkflowRun:
 
 
 def test_workflow_v212_has_explicit_context_and_output_budget_for_every_agent():
-    document = yaml.safe_load(Path("../../workflows/software_factory_ai_native_v2.yaml").read_text())
+    document = yaml.safe_load(_workflow_file("software_factory_ai_native_v2.yaml").read_text())
     graph = document["graph"]
     assert graph["version"] == "2.12.0"
     agents = [node for node in graph["nodes"] if node["type"] == "agent"]
@@ -91,7 +108,7 @@ def test_workflow_v212_has_explicit_context_and_output_budget_for_every_agent():
 
 
 def test_v213_compiler_preserves_v212_and_applies_bounded_role_policies():
-    base = yaml.safe_load(Path("../../workflows/software_factory_ai_native_v2.yaml").read_text())["graph"]
+    base = yaml.safe_load(_workflow_file("software_factory_ai_native_v2.yaml").read_text())["graph"]
     candidate = yaml.safe_load(compile_cost_policy_workflow())["graph"]
     assert base["version"] == "2.12.0"
     assert candidate["version"] == "2.13.0"
@@ -110,6 +127,91 @@ def test_v213_compiler_preserves_v212_and_applies_bounded_role_policies():
     assert engineer["context_policy"]["input_budget_tokens"] == 40_000
     assert demand["reserved_budget_usd"] == 6.0
     assert quality["reserved_budget_usd"] == 0.0
+
+
+def test_v2131_compiler_adds_compact_units_without_downgrading_critical_generation():
+    policy_path = _workflow_file("software_factory_ai_native_v2_13_1_policy.yaml")
+    candidate = yaml.safe_load(compile_cost_policy_workflow(policy_path=policy_path))["graph"]
+    assert candidate["version"] == "2.13.1"
+    assert candidate["execution"]["context_policy_version"] == "2.13.1"
+    nodes = {node["id"]: node for node in candidate["nodes"] if node["type"] == "agent"}
+    engineer = nodes["Engineer"]
+    architect = nodes["Architect"]
+    reviewer = nodes["Code Reviewer"]
+    assert engineer["model_role"] == "code"
+    assert architect["model_role"] == "reasoning"
+    assert engineer["plan_model_role"] == "reasoning"
+    assert engineer["finalize_model_role"] == "fast"
+    assert engineer["context_policy"]["unit_context_mode"] == "compact"
+    assert engineer["context_policy"]["unit_input_budget_tokens"] == 16_000
+    assert reviewer["minimal_solution_policy"] is True
+
+
+def test_compact_unit_context_is_bounded_deterministic_and_keeps_failure_evidence():
+    demand = ContextReference(
+        kind="demand",
+        ref_id="demand-1",
+        label="Approved demand",
+        checksum="a" * 64,
+        content="Build the approved tenant service. " * 800,
+    )
+    architecture = ContextReference(
+        kind="artifact",
+        ref_id="architecture-1",
+        label="SYSTEM_DESIGN.md",
+        checksum="b" * 64,
+        content="Architecture interfaces and invariants. " * 1200,
+    )
+    failure = ContextReference(
+        kind="test",
+        ref_id="test-1",
+        label="Testes: failed",
+        checksum="c" * 64,
+        content='{"status":"failed","stderr":"expected 200, got 500"}',
+    )
+    bundle = ContextBundle(
+        tenant_id="client-secret",
+        run_id="run-secret",
+        node_id="Engineer",
+        demand="Use approved demand evidence.",
+        references=[demand, architecture, failure],
+        constraints=["Do not cross tenant boundaries."],
+        policy_version="2.13.1",
+    )
+    policy = ContextPolicy(
+        version="2.13.1",
+        allowed_reference_types=["demand", "artifact", "test"],
+        required_artifacts=["SYSTEM_DESIGN.md"],
+        input_budget_tokens=20_000,
+        unit_context_mode="compact",
+        unit_input_budget_tokens=2_500,
+        max_unit_references=3,
+        compact_spec_enabled=True,
+    )
+    unit = ExecutionUnit(
+        id="unit-1",
+        tenant_id="client-secret",
+        run_id="run-secret",
+        node_id="Engineer",
+        unit_key="backend-api",
+        unit_type="file_batch",
+        targets_json=["generated_app/backend/app/main.py"],
+        dependencies_json=[],
+        iteration=1,
+    )
+    builder = UnitContextBuilder()
+    first = builder.build(context=bundle, policy=policy, unit=unit, action="execute")
+    second = builder.build(context=bundle, policy=policy, unit=unit, action="execute")
+    assert first.input_hash == second.input_hash
+    assert first.estimated_input_tokens < bundle.estimated_input_tokens
+    assert first.saved_input_tokens > 0
+    assert first.input_budget_tokens == 2_500
+    assert first.estimated_input_tokens <= first.input_budget_tokens
+    assert {reference.ref_id for reference in first.references} == {"demand-1", "architecture-1", "test-1"}
+    assert first.compact_spec["failure_evidence"] == [{"ref_id": "test-1", "label": "Testes: failed"}]
+    serialized = first.model_dump_json()
+    assert '"tenant_id"' not in serialized
+    assert '"run_id"' not in serialized
 
 
 def test_frozen_v211_baseline_loads_without_database_history():

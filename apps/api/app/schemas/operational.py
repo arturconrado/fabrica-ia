@@ -21,6 +21,25 @@ class NextAction(BaseModel):
     href: str
 
 
+class GuidanceProvenance(BaseModel):
+    source: Literal["ai", "deterministic_fallback"]
+    model_call_id: Optional[str] = None
+    generated_from: list[str] = Field(default_factory=list)
+
+
+class OperationalGuidance(BaseModel):
+    action: NextAction
+    why_now: str
+    checks: list[str] = Field(default_factory=list, max_length=3)
+    risks: list[str] = Field(default_factory=list, max_length=3)
+    draft: str = ""
+    evidence_refs: list[str] = Field(default_factory=list)
+    confidence: float = Field(ge=0, le=1)
+    provenance: GuidanceProvenance
+    state_hash: str
+    generated_at: str
+
+
 class TenantSummary(BaseModel):
     tenant_id: str
     tenant_name: str
@@ -36,6 +55,7 @@ class TenantSummary(BaseModel):
     maturity_level: str
     maturity_xp: int
     next_action: Optional[NextAction] = None
+    guidance: Optional[OperationalGuidance] = None
     last_event_at: Optional[str] = None
 
 
@@ -76,6 +96,7 @@ class GamificationProfileResponse(BaseModel):
 class ReviewDecision(BaseModel):
     decision: Literal["approve", "reject", "changes_requested"]
     comment: str = Field(default="", max_length=4000)
+    validation_mode: Literal["real", "synthetic"] = "real"
 
 
 class ReviewInboxItem(BaseModel):
@@ -187,7 +208,64 @@ class RunWorkspaceResponse(BaseModel):
     step_executions: list[dict[str, Any]] = Field(default_factory=list)
     execution_units: list[dict[str, Any]] = Field(default_factory=list)
     artifact_fragments: list[dict[str, Any]] = Field(default_factory=list)
+    plugin_invocations: list[dict[str, Any]] = Field(default_factory=list)
     validation: dict[str, Any] = Field(default_factory=dict)
+
+
+class PluginManifestResponse(BaseModel):
+    name: str
+    version: str
+    source_revision: str
+    source_url: str
+    license: str
+    capabilities: list[str]
+    access_mode: str
+    automatic_updates: bool
+    codex_plugin_selector: Optional[str] = None
+    codex_default_mode: Optional[str] = None
+    manifest_sha256: str
+
+
+class PluginCoverageResponse(BaseModel):
+    commands: list[str]
+    completed: int
+    registered: int
+    not_applicable: int
+    failed: int
+
+
+class PluginMeasuredResponse(BaseModel):
+    generated_files: int
+    non_blank_lines: int
+    declared_dependencies: int
+    dependency_names: list[str]
+    model_cost_usd: float
+    provenance: Literal["calculated_from_persisted_run"]
+
+
+class PluginArtifactResponse(BaseModel):
+    id: str
+    name: str
+    evidence_classification: str
+    created_at: str
+
+
+class RunPluginAnalysisResponse(BaseModel):
+    run_id: str
+    policy_version: str
+    manifests: list[PluginManifestResponse]
+    help: dict[str, Any]
+    invocations: list[dict[str, Any]]
+    coverage: PluginCoverageResponse
+    measured: PluginMeasuredResponse
+    artifacts: list[PluginArtifactResponse]
+    benchmark_boundary: str
+
+
+class ProductionPluginsResponse(BaseModel):
+    plugins: list[PluginManifestResponse]
+    ponytail_help: dict[str, Any]
+    security_boundary: dict[str, bool]
 
 
 class TokenReference(BaseModel):
@@ -204,6 +282,10 @@ class TokenContextAnalysis(BaseModel):
     budget_tokens: Optional[int] = None
     selected_tokens: Optional[int] = None
     discarded_tokens: Optional[int] = None
+    unit_mode: Optional[str] = None
+    unit_source_tokens: Optional[int] = None
+    unit_input_tokens: Optional[int] = None
+    unit_saved_tokens: Optional[int] = None
     references: list[TokenReference] = Field(default_factory=list)
     discarded_references: list[dict[str, Any]] = Field(default_factory=list)
     cited_references: list[str] = Field(default_factory=list)

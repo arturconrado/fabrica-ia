@@ -15,17 +15,6 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    profiles: ["full"]
-    image: redis:7-alpine
-    ports:
-      - "127.0.0.1:6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
   temporal-postgres:
     profiles: ["full"]
     image: postgres:16-alpine
@@ -103,13 +92,6 @@ services:
     volumes:
       - ${ASF_DATA_ROOT:-./data}/keycloak/h2:/opt/keycloak/data/h2
       - ./deploy/keycloak/software-factory-realm.json:/opt/keycloak/data/import/software-factory-realm.json:ro
-
-  mailpit:
-    profiles: ["full"]
-    image: axllent/mailpit:v1.21
-    ports:
-      - "127.0.0.1:8025:8025"
-      - "127.0.0.1:1025:1025"
 
   prometheus:
     profiles: ["full"]
@@ -202,6 +184,7 @@ services:
         ALTER DEFAULT PRIVILEGES FOR ROLE factory IN SCHEMA public
           GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO factory_app;
         GRANT EXECUTE ON FUNCTION public.asf_aggregate_technical_metrics() TO factory_app;
+        GRANT EXECUTE ON FUNCTION public.asf_active_tenant_ids() TO factory_app;
         SQL
     depends_on:
       migrate:
@@ -236,14 +219,53 @@ services:
       db-role-init:
         condition: service_completed_successfully
 
+  local-vp-onboarding:
+    build:
+      context: ./apps/api
+    command:
+      - python
+      - -m
+      - app.cli.bootstrap_tenant
+      - --tenant-id
+      - ${ASF_DEFAULT_TENANT_ID:-local-dev}
+      - --tenant-name
+      - ${ASF_DEFAULT_TENANT_NAME:-Local Development}
+      - --subject
+      - ${ASF_LOCAL_VP_SUBJECT:-22222222-2222-4222-8222-222222222222}
+      - --email
+      - ${ASF_LOCAL_VP_KEYCLOAK_USER:-vp@local.dev}
+      - --name
+      - Local Engagement Manager
+      - --role
+      - engagement_manager
+      - --confirm
+      - bootstrap assisted pilot tenant
+    environment:
+      DATABASE_URL: postgresql+psycopg://factory:factory@postgres:5432/factory
+      ASF_DATABASE_URL: postgresql+psycopg://factory:factory@postgres:5432/factory
+      ASF_RUNTIME_PROFILE: homologation
+      ASF_DEFAULT_TENANT_ID: ${ASF_DEFAULT_TENANT_ID:-local-dev}
+      ASF_DEFAULT_TENANT_NAME: ${ASF_DEFAULT_TENANT_NAME:-Local Development}
+    depends_on:
+      local-onboarding:
+        condition: service_completed_successfully
+
   api:
     build:
       context: ./apps/api
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "${ASF_API_WORKERS:-4}", "--timeout-keep-alive", "${ASF_API_KEEP_ALIVE_SECONDS:-15}", "--timeout-worker-healthcheck", "${ASF_API_WORKER_HEALTHCHECK_TIMEOUT_SECONDS:-60}", "--no-access-log"]
     ports:
       - "127.0.0.1:8000:8000"
     environment:
       DATABASE_URL: postgresql+psycopg://factory_app:${ASF_POSTGRES_APP_PASSWORD:-factory_app}@postgres:5432/factory
       ASF_DATABASE_URL: postgresql+psycopg://factory_app:${ASF_POSTGRES_APP_PASSWORD:-factory_app}@postgres:5432/factory
+      ASF_API_WORKERS: ${ASF_API_WORKERS:-4}
+      ASF_API_THREADPOOL_TOKENS: ${ASF_API_THREADPOOL_TOKENS:-40}
+      ASF_API_WORKER_HEALTHCHECK_TIMEOUT_SECONDS: ${ASF_API_WORKER_HEALTHCHECK_TIMEOUT_SECONDS:-60}
+      ASF_DB_POOL_SIZE: ${ASF_DB_POOL_SIZE:-5}
+      ASF_DB_MAX_OVERFLOW: ${ASF_DB_MAX_OVERFLOW:-5}
+      ASF_DB_POOL_TIMEOUT_SECONDS: ${ASF_DB_POOL_TIMEOUT_SECONDS:-15}
+      ASF_HOMOLOGATION_GLOBAL_BUDGET_USD: ${ASF_HOMOLOGATION_GLOBAL_BUDGET_USD:-0}
       ASF_ENVIRONMENT: local
       ASF_RUNTIME_PROFILE: homologation
       ASF_DATA_DIR: /data
@@ -280,6 +302,9 @@ services:
       ASF_KNOWLEDGE_CHUNK_OVERLAP_CHARS: ${ASF_KNOWLEDGE_CHUNK_OVERLAP_CHARS:-180}
       ASF_KNOWLEDGE_MAX_QUERY_RESULTS: ${ASF_KNOWLEDGE_MAX_QUERY_RESULTS:-8}
       ASF_GENERATIVE_BUILD_ENABLED: "false"
+      ASF_AI_NATIVE_POLICY_VERSION: ${ASF_AI_NATIVE_POLICY_VERSION:-2.13.2}
+      ASF_PRODUCTION_PLUGINS_ENABLED: "true"
+      ASF_PLUGIN_FAIL_CLOSED: "true"
       ASF_SERVICE_DELIVERY_OS_ENABLED: "true"
       ASF_SERVICE_WIP_GLOBAL_LIMIT: ${ASF_SERVICE_WIP_GLOBAL_LIMIT:-5}
       ASF_SERVICE_WIP_PER_TENANT_LIMIT: ${ASF_SERVICE_WIP_PER_TENANT_LIMIT:-2}
@@ -299,6 +324,8 @@ services:
       db-role-init:
         condition: service_completed_successfully
       local-onboarding:
+        condition: service_completed_successfully
+      local-vp-onboarding:
         condition: service_completed_successfully
       keycloak:
         condition: service_started
@@ -335,7 +362,11 @@ services:
       ASF_TEMPORAL_ADDRESS: temporal:7233
       ASF_LITELLM_BASE_URL: ${ASF_LITELLM_BASE_URL:-http://litellm:4000}
       ASF_LITELLM_API_KEY: ${ASF_LITELLM_API_KEY:-local-full-litellm-key}
+      ASF_HOMOLOGATION_GLOBAL_BUDGET_USD: ${ASF_HOMOLOGATION_GLOBAL_BUDGET_USD:-0}
       ASF_DEFAULT_MODEL: ${ASF_DEFAULT_MODEL:-asf-default}
+      ASF_AI_NATIVE_POLICY_VERSION: ${ASF_AI_NATIVE_POLICY_VERSION:-2.13.2}
+      ASF_PRODUCTION_PLUGINS_ENABLED: "true"
+      ASF_PLUGIN_FAIL_CLOSED: "true"
       ASF_ENCRYPTION_KEY: ${ASF_ENCRYPTION_KEY:-local-development-encryption-key}
       ASF_MCP_ENABLED: "true"
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}

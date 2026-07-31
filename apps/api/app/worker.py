@@ -4,15 +4,18 @@ from app.core.config import get_settings, validate_production_runtime
 from app.db.init_db import init_db
 from app.observability.tracing import configure_tracing, shutdown_tracing
 from app.workflow.temporal_workflows import (
+    ServiceDeliveryExecutionWorkflow,
     SoftwareFactoryAINativeWorkflowV2,
     SoftwareFactoryHomologationWorkflow,
     assemble_artifact_activity,
     evaluate_quality_activity,
     execute_atomic_node_activity,
     execute_enterprise_run_activity,
+    execute_service_execution_activity,
     execute_output_unit_activity,
     finalize_delivery_activity,
     load_execution_plan_activity,
+    mark_ai_native_run_failed_activity,
     plan_segmented_node_activity,
     prepare_human_approval_activity,
     run_sandbox_profile_activity,
@@ -35,10 +38,12 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=settings.temporal_task_queue,
-        workflows=[SoftwareFactoryHomologationWorkflow, SoftwareFactoryAINativeWorkflowV2],
+        workflows=[SoftwareFactoryHomologationWorkflow, SoftwareFactoryAINativeWorkflowV2, ServiceDeliveryExecutionWorkflow],
         activities=[
             execute_enterprise_run_activity,
+            execute_service_execution_activity,
             load_execution_plan_activity,
+            mark_ai_native_run_failed_activity,
             execute_atomic_node_activity,
             plan_segmented_node_activity,
             execute_output_unit_activity,

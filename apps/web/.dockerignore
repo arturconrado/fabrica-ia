@@ -1,4 +1,7 @@
 node_modules
 .next
+playwright-report
+test-results
+tsconfig.tsbuildinfo
 npm-debug.log
 Dockerfile

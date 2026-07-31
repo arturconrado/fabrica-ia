@@ -40,6 +40,7 @@ from app.models import (
     HumanFeedback,
     LearningSignal,
     LearningLesson,
+    PluginInvocation,
     Project,
     QualityGate,
     QualityScore,
@@ -204,6 +205,48 @@ class ProductionPipelineProvider:
                 yaml_path="workflows/software_factory_ai_native_v2_13_policy.yaml",
                 yaml_content=compile_cost_policy_workflow()
                 if Path("workflows/software_factory_ai_native_v2_13_policy.yaml").exists()
+                else "",
+            ),
+            WorkflowDefinition(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
+                workflow_id="software_factory_ai_native_v2",
+                version="2.13.1",
+                name="Software Factory AI-Native V2.13.1",
+                description="Compact per-unit context, stable prompt cache and minimal-solution guardrails.",
+                yaml_path="workflows/software_factory_ai_native_v2_13_1_policy.yaml",
+                yaml_content=compile_cost_policy_workflow(
+                    policy_path=Path("workflows/software_factory_ai_native_v2_13_1_policy.yaml")
+                )
+                if Path("workflows/software_factory_ai_native_v2_13_1_policy.yaml").exists()
+                else "",
+            ),
+            WorkflowDefinition(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
+                workflow_id="software_factory_ai_native_v2",
+                version="2.13.2",
+                name="Software Factory AI-Native V2.13.2",
+                description="Pinned Ponytail and Cavekit production protocols with audited mandatory coverage.",
+                yaml_path="workflows/software_factory_ai_native_v2_13_2_policy.yaml",
+                yaml_content=compile_cost_policy_workflow(
+                    policy_path=Path("workflows/software_factory_ai_native_v2_13_2_policy.yaml")
+                )
+                if Path("workflows/software_factory_ai_native_v2_13_2_policy.yaml").exists()
+                else "",
+            ),
+            WorkflowDefinition(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
+                workflow_id="software_factory_ai_native_v2",
+                version="2.14.0",
+                name="Software Factory AI-Native V2.14.0",
+                description="Candidate with bounded multi-discipline source authorship and QA-owned tests.",
+                yaml_path="workflows/software_factory_ai_native_v2_14_policy.yaml",
+                yaml_content=compile_cost_policy_workflow(
+                    policy_path=Path("workflows/software_factory_ai_native_v2_14_policy.yaml")
+                )
+                if Path("workflows/software_factory_ai_native_v2_14_policy.yaml").exists()
                 else "",
             ),
         ]
@@ -414,7 +457,7 @@ class ProductionPipelineProvider:
         run = db.get(WorkflowRun, run_id)
         if not run:
             raise ValueError("Run not found")
-        control = self._control_state(db, run)
+        control = self.control_state(db, run)
         control.status = "step_once"
         control.current_sop_step = "manual_step_requested"
         run.status = RUNNING
@@ -501,7 +544,7 @@ class ProductionPipelineProvider:
                 if run.status in {"cancel_requested", "cancelled"}:
                     self._finalize_cancellation(db, run)
                     return
-                control = self._control_state(db, run)
+                control = self.control_state(db, run)
                 db.refresh(control)
                 if step_mode == "step_once" and control.status == "step_once" and agent_name != "Human Approval":
                     control.status = "paused"
@@ -534,12 +577,22 @@ class ProductionPipelineProvider:
                 db.rollback()
             db.close()
 
-    def approve_run(self, db: Session, run_id: str, comment: str = "", *, commit: bool = True) -> WorkflowRun:
+    def approve_run(
+        self,
+        db: Session,
+        run_id: str,
+        comment: str = "",
+        *,
+        validation_mode: str = "real",
+        commit: bool = True,
+    ) -> WorkflowRun:
         run = db.get(WorkflowRun, run_id)
         if not run:
             raise DomainError(404, "RUN_NOT_FOUND", "Run not found")
         if not comment.strip():
             raise DomainError(400, "APPROVAL_COMMENT_REQUIRED", "Human approval comment is required")
+        if validation_mode not in {"real", "synthetic"}:
+            raise DomainError(422, "INVALID_VALIDATION_MODE", "Validation mode must be real or synthetic")
         if run.status != WAITING_FOR_HUMAN:
             raise DomainError(409, "RUN_NOT_AWAITING_APPROVAL", "Run is not awaiting final human approval")
         approval = (
@@ -556,57 +609,155 @@ class ProductionPipelineProvider:
         report = db.query(HomologationReport).filter_by(run_id=run.id, tenant_id=run.tenant_id).order_by(HomologationReport.created_at.desc()).first()
         final_test = db.query(TestReport).filter_by(run_id=run.id, tenant_id=run.tenant_id, status="passed").order_by(TestReport.created_at.desc()).first()
         package = db.query(HomologationPackage).filter_by(run_id=run.id, tenant_id=run.tenant_id).order_by(HomologationPackage.created_at.desc()).first()
-        if blocked or non_manual_pending or (report and report.blockers_json) or not final_test or not package:
+        is_real = validation_mode == "real"
+        strict_blockers: List[str] = []
+        if is_real:
+            expected_gate_ids = {gate_id for gate_id, _name, _category in QUALITY_GATES}
+            actual_gate_ids = [gate.gate_id for gate in gates]
+            if len(gates) != len(QUALITY_GATES) or set(actual_gate_ids) != expected_gate_ids:
+                strict_blockers.append("exact_17_quality_gates_required")
+            projected_hrs = (
+                round(
+                    sum(
+                        100.0
+                        if gate.gate_id == "human_approval" or gate.status == "review_required"
+                        else float(gate.score or 0.0)
+                        for gate in gates
+                    )
+                    / len(gates),
+                    2,
+                )
+                if gates
+                else 0.0
+            )
+            if projected_hrs < 90:
+                strict_blockers.append("projected_hrs_below_90")
+            changes = db.query(FileChange).filter_by(
+                run_id=run.id,
+                tenant_id=run.tenant_id,
+            ).all()
+            if not changes:
+                strict_blockers.append("code_file_changes_missing")
+            elif any(not str(change.diff or "").strip() for change in changes):
+                strict_blockers.append("code_file_change_diff_missing")
+            if not report:
+                strict_blockers.append("homologation_report_missing")
+            if run.generation_mode == "ai_native_v2":
+                invocations = db.query(PluginInvocation).filter_by(
+                    run_id=run.id,
+                    tenant_id=run.tenant_id,
+                ).all()
+                for plugin_name in ("ponytail", "cavekit"):
+                    plugin_rows = [
+                        row for row in invocations if row.plugin_name == plugin_name
+                    ]
+                    if not plugin_rows:
+                        strict_blockers.append(f"{plugin_name}_evidence_missing")
+                    elif any(
+                        row.status not in {"completed", "not_applicable"}
+                        or not str(row.output_hash or "")
+                        for row in plugin_rows
+                    ):
+                        strict_blockers.append(f"{plugin_name}_not_terminal")
+        if (
+            blocked
+            or non_manual_pending
+            or (report and report.blockers_json)
+            or not final_test
+            or not package
+            or strict_blockers
+        ):
             raise DomainError(
                 409,
                 "TECHNICAL_BLOCKERS_PRESENT",
-                f"Technical blockers cannot be overridden by human approval: blocked={blocked}, pending={non_manual_pending}",
+                (
+                    "Technical blockers cannot be overridden by human approval: "
+                    f"blocked={blocked}, pending={non_manual_pending}, strict={strict_blockers}"
+                ),
+                details={
+                    "blocked_gates": blocked,
+                    "pending_gates": non_manual_pending,
+                    "strict_blockers": strict_blockers,
+                },
             )
-        approval.status = APPROVED
+        terminal_status = APPROVED_FOR_HOMOLOGATION if is_real else "synthetic_approved_for_homologation"
+        approval.status = APPROVED if is_real else "synthetic_approved"
         approval.human_comment = comment
         approval.resolved_at = utcnow()
         for gate in gates:
             if gate.gate_id == "human_approval" or gate.status == "review_required":
-                gate.status = "passed"
+                gate.status = "passed" if is_real else "synthetic_passed"
                 gate.score = 100
                 gate.evidence_json = {
-                    "classification": "declared",
+                    "classification": "declared" if is_real else "synthetic",
                     "source": "human final review",
                     "comment": comment,
+                    "validation_mode": validation_mode,
                 }
                 gate.warnings_json = []
         run.homologation_readiness_score = round(sum(gate.score for gate in gates) / len(gates), 2) if gates else 0.0
-        run.status = APPROVED_FOR_HOMOLOGATION
+        run.status = terminal_status
         run.current_phase = "final_delivery"
         run.current_node = "FINAL"
         run.finished_at = utcnow()
         release_workflow_slot(db, run.id)
         if report:
-            report.status = APPROVED_FOR_HOMOLOGATION
+            report.status = terminal_status
             report.score = run.homologation_readiness_score
-            report.summary = "Technical evidence and explicit human review approved for assisted delivery."
+            report.summary = (
+                "Technical evidence and explicit human review approved for assisted delivery."
+                if is_real else
+                "Technical evidence passed; the final reviewer decision was synthetic and cannot release production."
+            )
         if package:
-            package.status = "approved"
+            package.status = "approved" if is_real else "synthetic_approved"
             package.manifest_json = {
                 **(package.manifest_json or {}),
-                "status": APPROVED_FOR_HOMOLOGATION,
+                "status": terminal_status,
                 "hrs": run.homologation_readiness_score,
-                "human_approval": {"classification": "declared", "comment": comment},
+                "human_approval": {
+                    "classification": "declared" if is_real else "synthetic",
+                    "comment": comment,
+                    "validation_mode": validation_mode,
+                },
             }
-            for artifact in db.query(Artifact).filter_by(run_id=run.id, tenant_id=run.tenant_id).all():
-                artifact.audience = "client"
-        emit_event(db, run_id, "approval.approved", "Humano aprovou a homologação.", node_id="Human Approval", payload={"comment": comment})
+            if is_real:
+                for artifact in db.query(Artifact).filter_by(run_id=run.id, tenant_id=run.tenant_id).all():
+                    artifact.audience = "client"
+        emit_event(
+            db,
+            run_id,
+            "approval.approved" if is_real else "approval.synthetic_approved",
+            "Humano aprovou a homologação." if is_real else "Identidade de teste simulou a decisão final.",
+            node_id="Human Approval",
+            payload={"comment": comment, "validation_mode": validation_mode},
+        )
         db.add(
             LearningSignal(
                 id=str(uuid.uuid4()), tenant_id=run.tenant_id, run_id=run.id,
                 signal_type="human.approval", source_type="approval_request", source_id=approval.id,
                 agent_name="Human Approval", value=1.0,
-                evidence_json={"decision": "approved", "hrs": run.homologation_readiness_score},
-                eligible_for_global=True,
+                evidence_json={"decision": "approved", "hrs": run.homologation_readiness_score, "validation_mode": validation_mode},
+                eligible_for_global=is_real,
             )
         )
-        emit_event(db, run_id, "homologation.approved", "Entrega aprovada para homologação.", node_id="Human Approval")
-        emit_event(db, run_id, "run.finished", "Run finalizado como approved_for_homologation.", node_id="FINAL", status=APPROVED_FOR_HOMOLOGATION)
+        emit_event(
+            db,
+            run_id,
+            "homologation.approved" if is_real else "homologation.synthetic_approved",
+            "Entrega aprovada para homologação." if is_real else "Fluxo técnico concluído sem aceite real.",
+            node_id="Human Approval",
+            payload={"validation_mode": validation_mode},
+        )
+        emit_event(
+            db,
+            run_id,
+            "run.finished",
+            f"Run finalizado como {terminal_status}.",
+            node_id="FINAL",
+            status=terminal_status,
+            payload={"validation_mode": validation_mode},
+        )
         if commit:
             db.commit()
             db.refresh(run)
@@ -803,8 +954,12 @@ class ProductionPipelineProvider:
                 )
             )
 
-    def _control_state(self, db: Session, run: WorkflowRun) -> AgentRunState:
-        control = db.query(AgentRunState).filter_by(run_id=run.id, agent_name="RUN_CONTROL").first()
+    def control_state(self, db: Session, run: WorkflowRun) -> AgentRunState:
+        control = db.query(AgentRunState).filter_by(
+            tenant_id=run.tenant_id,
+            run_id=run.id,
+            agent_name="RUN_CONTROL",
+        ).first()
         if control:
             return control
         control = AgentRunState(
@@ -815,8 +970,11 @@ class ProductionPipelineProvider:
             role="Orchestration Control",
             status="running",
             current_sop_step="continuous",
-            objective="Controlar pause/resume/step do runner interativo.",
-            tools_json=["pause", "resume", "step"],
+            objective="Controlar pause/resume/step/cancel do runner interativo.",
+            progress=0,
+            inputs_json=[],
+            outputs_json=[],
+            tools_json=["pause", "resume", "step", "cancel"],
         )
         db.add(control)
         db.flush()
@@ -845,7 +1003,7 @@ class ProductionPipelineProvider:
         last_capacity_heartbeat = 0.0
         while True:
             db.refresh(run)
-            control = self._control_state(db, run)
+            control = self.control_state(db, run)
             if run.status in {"cancel_requested", "cancelled"} or control.status in {"cancel_requested", "cancelled"}:
                 self._finalize_cancellation(db, run)
                 return "cancelled"
@@ -865,7 +1023,7 @@ class ProductionPipelineProvider:
             if commit:
                 db.commit()
             return
-        control = self._control_state(db, run)
+        control = self.control_state(db, run)
         control.status = "cancelled"
         control.current_sop_step = "cancellation_acknowledged"
         control.outputs_json = [item for item in (control.outputs_json or []) if item != "temporal_activity_active"]
